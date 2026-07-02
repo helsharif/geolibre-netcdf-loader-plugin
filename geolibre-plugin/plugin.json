@@ -1,0 +1,8 @@
+{
+  "id": "geolibre-netcdf",
+  "name": "NetCDF Loader",
+  "version": "0.2.1",
+  "entry": "dist/index.js",
+  "style": "dist/style.css",
+  "description": "Load NetCDF climate grids into GeoLibre as color-mapped raster layers."
+}
