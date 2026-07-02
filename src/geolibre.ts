@@ -102,7 +102,7 @@ const generatedRasterUrls: string[] = [];
 export const plugin: GeoLibrePlugin = {
   id: PLUGIN_ID,
   name: "NetCDF Loader",
-  version: "0.3.0",
+  version: "0.3.1",
   urlParameterNames: [NETCDF_URL_PARAM],
   activate(app) {
     unregisterPanel = app.registerRightPanel?.({
@@ -455,16 +455,20 @@ class NetCDFPanel {
         maxPixels: this.pluginState.maxPixels
       });
       const layerName = `${variable.name} raster from ${this.pluginState.sourceLabel ?? "NetCDF"}`;
-      const layerId = this.app.addCogLayer
+      const result = this.app.addCogLayer
         ? await this.addNativeRasterLayer(layerName, raster)
-        : this.addVectorRasterFallback(layerName, raster);
+        : this.addVectorRasterFallback(layerName, raster, "GeoLibre host does not expose addCogLayer.");
       this.app.fitBounds?.(raster.bounds);
       this.renderLegend(raster);
       const sampling =
         raster.sampledEvery > 1 ? ` Sampled every ${raster.sampledEvery} grid cells.` : "";
+      const mode =
+        result.mode === "native"
+          ? "Added native raster layer"
+          : `Added vector fallback (${result.reason})`;
       this.setStatus(
-        `Added raster layer ${layerId} (${raster.width} x ${raster.height}, ${raster.validValueCount} cells).${sampling}`,
-        "ok"
+        `${mode} ${result.layerId} (${raster.width} x ${raster.height}, ${raster.validValueCount} cells).${sampling}`,
+        result.mode === "native" ? "ok" : "busy"
       );
     } catch (error) {
       try {
@@ -476,16 +480,19 @@ class NetCDFPanel {
     }
   }
 
-  private async addNativeRasterLayer(layerName: string, raster: RasterGridResult): Promise<string> {
+  private async addNativeRasterLayer(
+    layerName: string,
+    raster: RasterGridResult
+  ): Promise<{ layerId: string; mode: "native" | "fallback"; reason?: string }> {
     if (!this.app.addCogLayer) {
-      return this.addVectorRasterFallback(layerName, raster);
+      return this.addVectorRasterFallback(layerName, raster, "GeoLibre host does not expose addCogLayer.");
     }
 
     try {
       const blob = rasterGridToGeoTiffBlob(raster);
       const url = URL.createObjectURL(blob);
       generatedRasterUrls.push(url);
-      return await this.app.addCogLayer(layerName, url, {
+      const layerId = await this.app.addCogLayer(layerName, url, {
         bands: "1",
         colormap: toCogColorMap(this.pluginState.colormap),
         rescaleMin: raster.valueRange[0],
@@ -493,16 +500,21 @@ class NetCDFPanel {
         nodata: Number.NaN,
         opacity: this.pluginState.opacity
       });
-    } catch {
-      return this.addVectorRasterFallback(layerName, raster);
+      return { layerId, mode: "native" };
+    } catch (error) {
+      return this.addVectorRasterFallback(layerName, raster, `addCogLayer failed: ${errorMessage(error)}`);
     }
   }
 
-  private addVectorRasterFallback(layerName: string, raster: RasterGridResult): string {
+  private addVectorRasterFallback(
+    layerName: string,
+    raster: RasterGridResult,
+    reason: string
+  ): { layerId: string; mode: "fallback"; reason: string } {
     const gridLayer = rasterToCellFeatureCollection(raster, this.pluginState.colormap);
     const layerId = this.app.addGeoJsonLayer(layerName, gridLayer, this.pluginState.sourceLabel);
     styleCellLayer(this.app.getMap?.() ?? undefined, layerId, this.pluginState.opacity);
-    return layerId;
+    return { layerId, mode: "fallback", reason };
   }
 
   private addPointFallback(variable: VariableSummary): void {

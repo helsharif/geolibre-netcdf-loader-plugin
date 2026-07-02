@@ -38,7 +38,7 @@ Download or build the plugin zip, then install it in GeoLibre Desktop:
 4. Select the generated zip:
 
 ```text
-geolibre-plugin/geolibre-netcdf-0.3.0.zip
+geolibre-plugin/geolibre-netcdf-0.3.1.zip
 ```
 
 You can also add the unpacked development directory:
@@ -69,7 +69,7 @@ npm run package:geolibre
 The packaged GeoLibre plugin archive is written to:
 
 ```text
-geolibre-plugin/geolibre-netcdf-0.3.0.zip
+geolibre-plugin/geolibre-netcdf-0.3.1.zip
 ```
 
 ## Development

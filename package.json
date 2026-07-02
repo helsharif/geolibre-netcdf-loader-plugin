@@ -1,6 +1,6 @@
 {
   "name": "geolibre-netcdf-loader-plugin",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "GeoLibre Desktop plugin for loading NetCDF climate grids as color-mapped raster-style layers.",
   "type": "module",
   "private": true,
