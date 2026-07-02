@@ -1,6 +1,6 @@
 # GeoLibre NetCDF Loader Plugin
 
-GeoLibre NetCDF Loader Plugin adds NetCDF4/HDF5 climate-grid support to GeoLibre Desktop. It reads local or HTTPS NetCDF4 files, lets you choose a variable and 2D slice, and renders the result as a native raster layer when GeoLibre's raster API is available.
+GeoLibre NetCDF Loader Plugin adds NetCDF4/HDF5 climate-grid support to GeoLibre Desktop. It reads local or HTTPS NetCDF4 files, lets you choose a variable and 2D slice, and renders the result as a color-mapped raster.
 
 Developed by **Husayn El Sharif**.
 
@@ -12,21 +12,21 @@ Developed by **Husayn El Sharif**.
 - Read NetCDF4/HDF5 files with `h5wasm`.
 - Detect common latitude and longitude coordinate variables.
 - Select non-spatial dimension indexes such as `time`, `level`, or `depth`.
-- Render selected slices as true MapLibre canvas raster overlays by default.
-- Keep GeoLibre's native `addCogLayer` path as a compatibility route when direct map access is unavailable.
+- Choose between a GeoLibre raster layer that appears in the left Layers panel and a direct MapLibre raster overlay.
+- Register GeoLibre layers through `addCogLayer` using an in-memory GeoTIFF data URL.
 - Render with Panoply-inspired color ramps:
   - Temperature
   - Viridis
   - Turbo
   - Blue-red
   - Grayscale
-- Use plugin-managed MapLibre raster overlays by default, with GeoLibre's native layer path available as a compatibility route.
+- Use direct MapLibre overlays as a rendering fallback when GeoLibre's native raster path does not draw local in-memory rasters.
 
 ## Rendering Approach
 
-The default path renders the selected NetCDF slice into an in-memory canvas and registers it directly with MapLibre as a `canvas` source and `raster` layer. This avoids GeoLibre builds where `addCogLayer` registers a COG layer in the Layers panel but does not draw local in-memory rasters.
+The default **GeoLibre layer (left panel)** mode converts the selected NetCDF slice into an in-memory, georeferenced single-band GeoTIFF data URL and registers it through GeoLibre's native `addCogLayer` helper. This is the mode to use when you need the layer in GeoLibre's left Layers panel.
 
-When direct map access is unavailable, the plugin can still attempt GeoLibre's native `addCogLayer` path using an in-memory GeoTIFF. The direct canvas path is still raster rendering, not a vector fallback. Because it bypasses GeoLibre's layer store, direct overlays are managed from the plugin panel rather than the left Layers panel.
+The **Direct raster overlay** mode renders the same slice into an in-memory canvas and registers it directly with MapLibre as a `canvas` source and `raster` layer. This is still raster rendering, not a vector fallback, but it bypasses GeoLibre's layer store, so direct overlays are managed from the plugin panel rather than the left Layers panel.
 
 ## Install
 
@@ -38,7 +38,7 @@ Download or build the plugin zip, then install it in GeoLibre Desktop:
 4. Select the generated zip:
 
 ```text
-geolibre-plugin/geolibre-netcdf-0.4.2.zip
+geolibre-plugin/geolibre-netcdf-0.4.3.zip
 ```
 
 You can also add the unpacked development directory:
@@ -54,10 +54,10 @@ geolibre-plugin
 3. Choose a local NetCDF file or enter an HTTPS NetCDF URL.
 4. Select a renderable variable, such as `tavg (time, lat, lon)`.
 5. Set any non-spatial dimension indexes, such as `time index`.
-6. Choose a colormap and opacity.
+6. Choose a colormap, opacity, and layer mode.
 7. Click **Add raster layer**.
 
-The raster should appear on the map as a plugin-managed MapLibre overlay and can be removed from the NetCDF panel.
+Use **GeoLibre layer (left panel)** when you want the layer in GeoLibre's Layers panel. Use **Direct raster overlay** if GeoLibre registers the layer but does not draw it.
 
 ## Build From Source
 
@@ -69,7 +69,7 @@ npm run package:geolibre
 The packaged GeoLibre plugin archive is written to:
 
 ```text
-geolibre-plugin/geolibre-netcdf-0.4.2.zip
+geolibre-plugin/geolibre-netcdf-0.4.3.zip
 ```
 
 ## Development
@@ -94,7 +94,7 @@ The test suite includes a few pure grid helper checks. If a local sample file ex
 - Classic NetCDF3/CDF files are detected but not rendered in version 1.
 - Large multidimensional files are read in the browser/WebView, so very large arrays may be slow or memory-heavy.
 - Curvilinear grids and projected coordinates are not fully supported yet; the current renderer expects latitude and longitude coordinates.
-- Full GeoLibre Layers-panel integration depends on GeoLibre's `addCogLayer` behavior for local in-memory rasters. The default renderer uses plugin-managed MapLibre raster overlays because that path has proven more reliable in current GeoLibre Desktop builds.
+- Full GeoLibre Layers-panel integration depends on GeoLibre's `addCogLayer` behavior for local in-memory rasters. Direct overlays render independently but are not visible in the left Layers panel.
 
 ## Repository Topics
 
