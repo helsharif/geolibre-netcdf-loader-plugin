@@ -1,6 +1,6 @@
 {
   "name": "geolibre-netcdf-loader-plugin",
-  "version": "0.4.4",
+  "version": "0.5.0",
   "description": "GeoLibre Desktop plugin for loading NetCDF climate grids as color-mapped raster-style layers.",
   "type": "module",
   "private": true,
@@ -29,7 +29,7 @@
   "scripts": {
     "build": "tsc --noEmit && vite build --config vite.geolibre.config.ts",
     "package:geolibre": "npm run build && node scripts/package-geolibre.mjs",
-    "test": "vitest run"
+    "test": "vitest run tests/netcdf.test.ts"
   },
   "dependencies": {
     "h5wasm": "^0.10.3"

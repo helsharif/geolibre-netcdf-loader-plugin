@@ -6,7 +6,6 @@ import {
   toRasterGrid,
   variableLabel
 } from "./netcdf";
-import { rasterGridToGeoTiffBlob } from "./geotiff";
 import type {
   GeoLibreAppAPI,
   GeoLibreMapControl,
@@ -105,12 +104,13 @@ interface GeneratedRasterOverlay {
   sourceId: string;
   layerId: string;
   name: string;
+  registered: boolean;
 }
 
 export const plugin: GeoLibrePlugin = {
   id: PLUGIN_ID,
   name: "NetCDF Loader",
-  version: "0.4.4",
+  version: "0.5.0",
   urlParameterNames: [NETCDF_URL_PARAM],
   activate(app) {
     unregisterPanel = app.registerRightPanel?.({
@@ -149,6 +149,7 @@ export const plugin: GeoLibrePlugin = {
     if (mapControl) {
       app.removeMapControl?.(mapControl);
     }
+    unregisterRegisteredRasterOverlays(app);
     removeAllGeneratedRasterOverlays(app.getMap?.());
     closeFloatingPanel();
     unregisterMenu?.();
@@ -489,7 +490,7 @@ class NetCDFPanel {
       this.renderOverlayControls();
       const sampling =
         raster.sampledEvery > 1 ? ` Sampled every ${raster.sampledEvery} grid cells.` : "";
-      const mode = result.mode === "native" ? "Added GeoLibre raster layer" : "Added direct raster overlay";
+      const mode = result.mode === "registered" ? "Added GeoLibre raster layer" : "Added direct raster overlay";
       const note =
         result.mode === "maplibre"
           ? " Managed from this plugin panel; direct overlays are not visible in GeoLibre's Layers panel."
@@ -506,37 +507,54 @@ class NetCDFPanel {
   private async addRasterLayer(
     layerName: string,
     raster: RasterGridResult
-  ): Promise<{ layerId: string; mode: "native" | "maplibre" }> {
+  ): Promise<{ layerId: string; mode: "registered" | "maplibre" }> {
     if (this.pluginState.layerMode === "direct") {
       return this.addMapLibreRasterOverlay(layerName, raster);
     }
 
-    return this.addNativeRasterLayer(layerName, raster);
+    return this.addRegisteredRasterOverlay(layerName, raster);
   }
 
-  private async addNativeRasterLayer(
+  private addRegisteredRasterOverlay(
     layerName: string,
     raster: RasterGridResult
-  ): Promise<{ layerId: string; mode: "native" | "maplibre" }> {
-    if (!this.app.addCogLayer) {
-      return this.addMapLibreRasterOverlay(layerName, raster);
+  ): { layerId: string; mode: "registered" } {
+    if (!this.app.registerExternalNativeLayer) {
+      throw new Error(
+        "This GeoLibre build does not expose registerExternalNativeLayer, so the plugin cannot create a Layers-panel raster entry."
+      );
+    }
+    const map = this.app.getMap?.();
+    if (!map) {
+      throw new Error(
+        "This GeoLibre build does not expose direct map access, so the plugin cannot add a registered raster layer."
+      );
     }
 
-    try {
-      const blob = rasterGridToGeoTiffBlob(raster);
-      const url = await blobToDataUrl(blob);
-      const layerId = await this.app.addCogLayer(layerName, url, {
-        bands: "1",
-        colormap: toCogColorMap(this.pluginState.colormap),
-        rescaleMin: raster.valueRange[0],
-        rescaleMax: raster.valueRange[1],
-        nodata: Number.NaN,
-        opacity: this.pluginState.opacity
-      });
-      return { layerId, mode: "native" };
-    } catch (error) {
-      throw new Error(`addCogLayer failed: ${errorMessage(error)}`);
-    }
+    const canvas = renderRasterToCanvas(raster, this.pluginState.colormap);
+    const overlay = addRasterCanvasLayer(map, layerName, canvas, raster, this.pluginState.opacity);
+    generatedRasterOverlays.push({ ...overlay, name: layerName, registered: true });
+    this.app.registerExternalNativeLayer({
+      id: overlay.layerId,
+      name: layerName,
+      type: "raster",
+      source: {
+        type: "canvas",
+        sourceId: overlay.sourceId,
+        variable: raster.variableName
+      },
+      sourceId: overlay.sourceId,
+      sourceIds: [overlay.sourceId],
+      nativeLayerIds: [overlay.layerId],
+      opacity: this.pluginState.opacity,
+      metadata: {
+        sourceKind: "geolibre-netcdf-raster",
+        pluginId: PLUGIN_ID,
+        externalNativeLayer: true,
+        controlOwnsPaint: true
+      }
+    });
+    return { layerId: overlay.layerId, mode: "registered" };
   }
 
   private addMapLibreRasterOverlay(
@@ -552,7 +570,7 @@ class NetCDFPanel {
 
     const canvas = renderRasterToCanvas(raster, this.pluginState.colormap);
     const overlay = addRasterCanvasLayer(map, layerName, canvas, raster, this.pluginState.opacity);
-    generatedRasterOverlays.push({ ...overlay, name: layerName });
+    generatedRasterOverlays.push({ ...overlay, name: layerName, registered: false });
     return { layerId: overlay.layerId, mode: "maplibre" };
   }
 
@@ -579,13 +597,14 @@ class NetCDFPanel {
       return;
     }
     dataset.querySelector(".geolibre-netcdf__overlays")?.remove();
-    if (generatedRasterOverlays.length === 0) {
+    const directOverlays = generatedRasterOverlays.filter((overlay) => !overlay.registered);
+    if (directOverlays.length === 0) {
       return;
     }
 
     const controls = el("div", "geolibre-netcdf__overlays");
     controls.append(el("h4", "", "Map raster overlays"));
-    for (const overlay of generatedRasterOverlays) {
+    for (const overlay of directOverlays) {
       const row = el("div", "geolibre-netcdf__overlay-row");
       row.append(el("span", "", overlay.name));
       row.append(
@@ -643,17 +662,6 @@ function isSpatialDimension(name: string): boolean {
   return ["lat", "latitude", "y", "nav_lat", "lon", "lng", "long", "longitude", "x", "nav_lon"].includes(
     normalized
   );
-}
-
-function toCogColorMap(colorMapName: ColorMapName): string {
-  const colorMaps: Record<ColorMapName, string> = {
-    temperature: "spectral",
-    viridis: "viridis",
-    turbo: "turbo",
-    blueRed: "rdylbu",
-    grayscale: "gray"
-  };
-  return colorMaps[colorMapName];
 }
 
 function addRasterCanvasLayer(
@@ -726,21 +734,6 @@ function renderRasterToCanvas(raster: RasterGridResult, colorMapName: ColorMapNa
   return canvas;
 }
 
-function blobToDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.addEventListener("load", () => {
-      if (typeof reader.result === "string") {
-        resolve(reader.result);
-      } else {
-        reject(new Error("Could not encode GeoTIFF for GeoLibre raster registration."));
-      }
-    });
-    reader.addEventListener("error", () => reject(reader.error ?? new Error("Could not read GeoTIFF blob.")));
-    reader.readAsDataURL(blob);
-  });
-}
-
 function removeGeneratedRasterOverlay(map: GeoLibreMapLike | undefined, layerId: string): void {
   const index = generatedRasterOverlays.findIndex((overlay) => overlay.layerId === layerId);
   if (index < 0) {
@@ -762,6 +755,12 @@ function removeGeneratedRasterOverlay(map: GeoLibreMapLike | undefined, layerId:
 function removeAllGeneratedRasterOverlays(map: GeoLibreMapLike | undefined): void {
   for (const overlay of [...generatedRasterOverlays]) {
     removeGeneratedRasterOverlay(map, overlay.layerId);
+  }
+}
+
+function unregisterRegisteredRasterOverlays(app: GeoLibreAppAPI): void {
+  for (const overlay of generatedRasterOverlays.filter((entry) => entry.registered)) {
+    app.unregisterExternalNativeLayer?.(overlay.layerId);
   }
 }
 

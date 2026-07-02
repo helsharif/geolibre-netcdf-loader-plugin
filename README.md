@@ -12,19 +12,19 @@ Developed by **Husayn El Sharif**.
 - Read NetCDF4/HDF5 files with `h5wasm`.
 - Detect common latitude and longitude coordinate variables.
 - Select non-spatial dimension indexes such as `time`, `level`, or `depth`.
-- Choose between a GeoLibre raster layer that appears in the left Layers panel and a direct MapLibre raster overlay.
-- Register GeoLibre layers through `addCogLayer` using an in-memory GeoTIFF data URL.
+- Choose between a GeoLibre-registered raster layer that appears in the left Layers panel and a direct MapLibre raster overlay.
+- Register plugin-owned raster layers with GeoLibre through `registerExternalNativeLayer`.
 - Render with Panoply-inspired color ramps:
   - Temperature
   - Viridis
   - Turbo
   - Blue-red
   - Grayscale
-- Use direct MapLibre overlays as an explicit alternate rendering mode when GeoLibre's native raster path does not draw local in-memory rasters.
+- Use direct MapLibre overlays as an explicit alternate rendering mode for visual debugging without layer-store registration.
 
 ## Rendering Approach
 
-The default **GeoLibre layer (left panel)** mode converts the selected NetCDF slice into an in-memory, georeferenced single-band GeoTIFF data URL and registers it through GeoLibre's native `addCogLayer` helper. This is the mode to use when you need the layer in GeoLibre's left Layers panel.
+The default **GeoLibre layer (left panel)** mode renders the selected NetCDF slice as a MapLibre canvas raster layer, then registers that plugin-owned native layer with GeoLibre through `registerExternalNativeLayer`. This is the mode to use when you need the layer in GeoLibre's left Layers panel.
 
 The **Direct raster overlay** mode renders the same slice into an in-memory canvas and registers it directly with MapLibre as a `canvas` source and `raster` layer. This is still raster rendering, not a vector fallback, but it bypasses GeoLibre's layer store, so direct overlays are managed from the plugin panel rather than the left Layers panel.
 
@@ -38,7 +38,7 @@ Download or build the plugin zip, then install it in GeoLibre Desktop:
 4. Select the generated zip:
 
 ```text
-geolibre-plugin/geolibre-netcdf-0.4.4.zip
+geolibre-plugin/geolibre-netcdf-0.5.0.zip
 ```
 
 You can also add the unpacked development directory:
@@ -57,7 +57,7 @@ geolibre-plugin
 6. Choose a colormap, opacity, and layer mode.
 7. Click **Add raster layer**.
 
-Use **GeoLibre layer (left panel)** when you want the layer in GeoLibre's Layers panel. This mode reports an error if GeoLibre cannot create the registered raster layer. Use **Direct raster overlay** if GeoLibre registers the layer but does not draw it.
+Use **GeoLibre layer (left panel)** when you want the layer in GeoLibre's Layers panel. Use **Direct raster overlay** only for quick visual debugging without a left-panel entry.
 
 ## Build From Source
 
@@ -69,7 +69,7 @@ npm run package:geolibre
 The packaged GeoLibre plugin archive is written to:
 
 ```text
-geolibre-plugin/geolibre-netcdf-0.4.4.zip
+geolibre-plugin/geolibre-netcdf-0.5.0.zip
 ```
 
 ## Development
@@ -94,7 +94,7 @@ The test suite includes a few pure grid helper checks. If a local sample file ex
 - Classic NetCDF3/CDF files are detected but not rendered in version 1.
 - Large multidimensional files are read in the browser/WebView, so very large arrays may be slow or memory-heavy.
 - Curvilinear grids and projected coordinates are not fully supported yet; the current renderer expects latitude and longitude coordinates.
-- Full GeoLibre Layers-panel integration depends on GeoLibre's `addCogLayer` behavior for local in-memory rasters. Direct overlays render independently but are not visible in the left Layers panel.
+- Full GeoLibre Layers-panel integration requires a GeoLibre build that exposes `registerExternalNativeLayer`. Direct overlays render independently but are not visible in the left Layers panel.
 
 ## Repository Topics
 

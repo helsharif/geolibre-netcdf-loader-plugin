@@ -31,6 +31,10 @@ export interface GeoLibreAppAPI {
     url: string,
     options?: GeoLibreCogLayerOptions
   ) => Promise<string>;
+  registerExternalNativeLayer?: (
+    layer: GeoLibreExternalNativeLayerRegistration
+  ) => void;
+  unregisterExternalNativeLayer?: (id: string) => void;
   fetchArrayBuffer?: (url: string) => Promise<ArrayBuffer>;
   fitBounds?: (bounds: [number, number, number, number]) => void;
   getMap?: () => GeoLibreMapLike;
@@ -60,6 +64,21 @@ export interface GeoLibreCogLayerOptions {
   nodata?: number;
   opacity?: number;
   beforeLayerId?: string;
+}
+
+export interface GeoLibreExternalNativeLayerRegistration {
+  id: string;
+  name: string;
+  type?: string;
+  source?: Record<string, unknown>;
+  nativeLayerIds: string[];
+  sourceIds?: string[];
+  sourceId?: string;
+  beforeId?: string;
+  opacity?: number;
+  style?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  sourcePath?: string;
 }
 
 export interface GeoLibreMapLike {

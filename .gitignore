@@ -3,3 +3,4 @@ example_netcdf_files/
 geolibre-plugin/dist/
 geolibre-plugin/*.zip
 .vite/
+.geolibre-source/
