@@ -7,6 +7,7 @@ import {
   variableLabel
 } from "./netcdf";
 import type {
+  FeatureCollection,
   GeoLibreAppAPI,
   GeoLibreMapControl,
   GeoLibreMapLike,
@@ -103,6 +104,8 @@ const generatedRasterOverlays: GeneratedRasterOverlay[] = [];
 interface GeneratedRasterOverlay {
   sourceId: string;
   layerId: string;
+  identifySourceId?: string;
+  identifyLayerId?: string;
   name: string;
   registered: boolean;
 }
@@ -110,7 +113,7 @@ interface GeneratedRasterOverlay {
 export const plugin: GeoLibrePlugin = {
   id: PLUGIN_ID,
   name: "NetCDF Loader",
-  version: "0.5.0",
+  version: "0.5.1",
   urlParameterNames: [NETCDF_URL_PARAM],
   activate(app) {
     unregisterPanel = app.registerRightPanel?.({
@@ -533,7 +536,14 @@ class NetCDFPanel {
 
     const canvas = renderRasterToCanvas(raster, this.pluginState.colormap);
     const overlay = addRasterCanvasLayer(map, layerName, canvas, raster, this.pluginState.opacity);
-    generatedRasterOverlays.push({ ...overlay, name: layerName, registered: true });
+    const identifyOverlay = addRasterIdentifyLayer(map, layerName, raster, overlay.layerId);
+    generatedRasterOverlays.push({
+      ...overlay,
+      identifySourceId: identifyOverlay.sourceId,
+      identifyLayerId: identifyOverlay.layerId,
+      name: layerName,
+      registered: true
+    });
     this.app.registerExternalNativeLayer({
       id: overlay.layerId,
       name: layerName,
@@ -544,14 +554,15 @@ class NetCDFPanel {
         variable: raster.variableName
       },
       sourceId: overlay.sourceId,
-      sourceIds: [overlay.sourceId],
-      nativeLayerIds: [overlay.layerId],
+      sourceIds: [overlay.sourceId, identifyOverlay.sourceId],
+      nativeLayerIds: [overlay.layerId, identifyOverlay.layerId],
       opacity: this.pluginState.opacity,
       metadata: {
         sourceKind: "geolibre-netcdf-raster",
         pluginId: PLUGIN_ID,
         externalNativeLayer: true,
-        controlOwnsPaint: true
+        controlOwnsPaint: true,
+        identifiable: true
       }
     });
     return { layerId: overlay.layerId, mode: "registered" };
@@ -704,6 +715,100 @@ function addRasterCanvasLayer(
   return { sourceId, layerId };
 }
 
+function addRasterIdentifyLayer(
+  map: GeoLibreMapLike,
+  name: string,
+  raster: RasterGridResult,
+  rasterLayerId: string
+): { sourceId: string; layerId: string } {
+  const sourceId = `${rasterLayerId}-identify-source`;
+  const layerId = `${rasterLayerId}-identify`;
+  map.addSource(sourceId, {
+    type: "geojson",
+    data: rasterToIdentifyFeatureCollection(raster)
+  });
+  map.addLayer({
+    id: layerId,
+    type: "fill",
+    source: sourceId,
+    metadata: {
+      "geolibre:displayName": `${name} identify cells`,
+      "geolibre:plugin": PLUGIN_ID
+    },
+    paint: {
+      "fill-color": "#000000",
+      "fill-opacity": 0
+    }
+  });
+  return { sourceId, layerId };
+}
+
+function rasterToIdentifyFeatureCollection(raster: RasterGridResult): FeatureCollection {
+  const features: FeatureCollection["features"] = [];
+  const lonEdges = centersToEdges(raster.lonCenters, raster.bounds[0], raster.bounds[2]);
+  const latEdges = centersToEdges(raster.latCenters, raster.bounds[3], raster.bounds[1]);
+
+  for (let row = 0; row < raster.height; row += 1) {
+    const north = latEdges[row];
+    const south = latEdges[row + 1];
+    const minLat = Math.min(south, north);
+    const maxLat = Math.max(south, north);
+    for (let column = 0; column < raster.width; column += 1) {
+      const value = raster.values[row * raster.width + column];
+      if (!Number.isFinite(value)) {
+        continue;
+      }
+      const west = lonEdges[column];
+      const east = lonEdges[column + 1];
+      const minLon = Math.min(west, east);
+      const maxLon = Math.max(west, east);
+      features.push({
+        type: "Feature",
+        geometry: {
+          type: "Polygon",
+          coordinates: [
+            [
+              [minLon, minLat],
+              [maxLon, minLat],
+              [maxLon, maxLat],
+              [minLon, maxLat],
+              [minLon, minLat]
+            ]
+          ]
+        },
+        properties: {
+          variable: raster.variableName,
+          value,
+          row,
+          column,
+          longitude: raster.lonCenters[column],
+          latitude: raster.latCenters[row],
+          sampled_every: raster.sampledEvery
+        }
+      });
+    }
+  }
+
+  return { type: "FeatureCollection", features };
+}
+
+function centersToEdges(centers: number[], firstFallback: number, lastFallback: number): number[] {
+  if (centers.length === 0) {
+    return [firstFallback, lastFallback];
+  }
+  if (centers.length === 1) {
+    return [firstFallback, lastFallback];
+  }
+
+  const edges = new Array<number>(centers.length + 1);
+  edges[0] = firstFallback;
+  for (let index = 1; index < centers.length; index += 1) {
+    edges[index] = (centers[index - 1] + centers[index]) / 2;
+  }
+  edges[centers.length] = lastFallback;
+  return edges;
+}
+
 function renderRasterToCanvas(raster: RasterGridResult, colorMapName: ColorMapName): HTMLCanvasElement {
   const canvas = document.createElement("canvas");
   canvas.width = raster.width;
@@ -741,8 +846,14 @@ function removeGeneratedRasterOverlay(map: GeoLibreMapLike | undefined, layerId:
   }
   const [overlay] = generatedRasterOverlays.splice(index, 1);
   try {
+    if (overlay.identifyLayerId && map?.getLayer(overlay.identifyLayerId)) {
+      map.removeLayer(overlay.identifyLayerId);
+    }
     if (map?.getLayer(overlay.layerId)) {
       map.removeLayer(overlay.layerId);
+    }
+    if (overlay.identifySourceId && map?.getSource(overlay.identifySourceId)) {
+      map.removeSource(overlay.identifySourceId);
     }
     if (map?.getSource(overlay.sourceId)) {
       map.removeSource(overlay.sourceId);
