@@ -3,13 +3,11 @@ import {
   closeNetCDF,
   getDefaultFixedDimensions,
   summarizeNetCDF,
-  toPointFeatureCollection,
   toRasterGrid,
   variableLabel
 } from "./netcdf";
 import { rasterGridToGeoTiffBlob } from "./geotiff";
 import type {
-  FeatureCollection,
   GeoLibreAppAPI,
   GeoLibreMapControl,
   GeoLibreMapLike,
@@ -99,11 +97,18 @@ let mapControl: NetCDFMapControl | undefined;
 let floatingPanel: HTMLElement | undefined;
 let floatingPanelView: NetCDFPanel | undefined;
 const generatedRasterUrls: string[] = [];
+const generatedRasterOverlays: GeneratedRasterOverlay[] = [];
+
+interface GeneratedRasterOverlay {
+  sourceId: string;
+  layerId: string;
+  name: string;
+}
 
 export const plugin: GeoLibrePlugin = {
   id: PLUGIN_ID,
   name: "NetCDF Loader",
-  version: "0.4.0",
+  version: "0.4.1",
   urlParameterNames: [NETCDF_URL_PARAM],
   activate(app) {
     unregisterPanel = app.registerRightPanel?.({
@@ -142,6 +147,7 @@ export const plugin: GeoLibrePlugin = {
     if (mapControl) {
       app.removeMapControl?.(mapControl);
     }
+    removeAllGeneratedRasterOverlays(app.getMap?.());
     revokeGeneratedRasterUrls();
     closeFloatingPanel();
     unregisterMenu?.();
@@ -388,6 +394,7 @@ class NetCDFPanel {
     }
 
     this.container.append(dataset);
+    this.renderOverlayControls();
   }
 
   private renderSliceControls(variable: VariableSummary): HTMLElement {
@@ -458,37 +465,43 @@ class NetCDFPanel {
         maxPixels: this.pluginState.maxPixels
       });
       const layerName = `${variable.name} raster from ${this.pluginState.sourceLabel ?? "NetCDF"}`;
-      const result = this.app.addCogLayer
-        ? await this.addNativeRasterLayer(layerName, raster)
-        : this.addVectorRasterFallback(layerName, raster, "GeoLibre host does not expose addCogLayer.");
+      const result = await this.addRasterLayer(layerName, raster);
       this.app.fitBounds?.(raster.bounds);
       this.renderLegend(raster);
+      this.renderOverlayControls();
       const sampling =
         raster.sampledEvery > 1 ? ` Sampled every ${raster.sampledEvery} grid cells.` : "";
-      const mode =
-        result.mode === "native"
-          ? "Added native raster layer"
-          : `Added vector fallback (${result.reason})`;
+      const mode = result.mode === "native" ? "Added native raster layer" : "Added MapLibre raster overlay";
+      const note =
+        result.mode === "maplibre"
+          ? " GeoLibre does not expose addCogLayer in this build, so the raster is managed from this plugin panel."
+          : "";
       this.setStatus(
-        `${mode} ${result.layerId} (${raster.width} x ${raster.height}, ${raster.validValueCount} cells).${sampling}`,
-        result.mode === "native" ? "ok" : "busy"
+        `${mode} ${result.layerId} (${raster.width} x ${raster.height}, ${raster.validValueCount} cells).${sampling}${note}`,
+        "ok"
       );
     } catch (error) {
-      try {
-        await this.addPointFallback(variable);
-        this.setStatus(`${errorMessage(error)} Added points as a fallback.`, "error");
-      } catch (fallbackError) {
-        this.setStatus(`${errorMessage(error)} Fallback also failed: ${errorMessage(fallbackError)}`, "error");
-      }
+      this.setStatus(errorMessage(error), "error");
     }
+  }
+
+  private async addRasterLayer(
+    layerName: string,
+    raster: RasterGridResult
+  ): Promise<{ layerId: string; mode: "native" | "maplibre" }> {
+    if (this.app.addCogLayer) {
+      return this.addNativeRasterLayer(layerName, raster);
+    }
+
+    return this.addMapLibreRasterOverlay(layerName, raster);
   }
 
   private async addNativeRasterLayer(
     layerName: string,
     raster: RasterGridResult
-  ): Promise<{ layerId: string; mode: "native" | "fallback"; reason?: string }> {
+  ): Promise<{ layerId: string; mode: "native" | "maplibre" }> {
     if (!this.app.addCogLayer) {
-      return this.addVectorRasterFallback(layerName, raster, "GeoLibre host does not expose addCogLayer.");
+      return this.addMapLibreRasterOverlay(layerName, raster);
     }
 
     try {
@@ -505,33 +518,27 @@ class NetCDFPanel {
       });
       return { layerId, mode: "native" };
     } catch (error) {
-      return this.addVectorRasterFallback(layerName, raster, `addCogLayer failed: ${errorMessage(error)}`);
+      const result = this.addMapLibreRasterOverlay(layerName, raster);
+      this.setStatus(`addCogLayer failed: ${errorMessage(error)} Using a MapLibre raster overlay.`, "busy");
+      return result;
     }
   }
 
-  private addVectorRasterFallback(
+  private addMapLibreRasterOverlay(
     layerName: string,
-    raster: RasterGridResult,
-    reason: string
-  ): { layerId: string; mode: "fallback"; reason: string } {
-    const gridLayer = rasterToCellFeatureCollection(raster, this.pluginState.colormap);
-    const layerId = this.app.addGeoJsonLayer(layerName, gridLayer, this.pluginState.sourceLabel);
-    styleCellLayer(this.app.getMap?.() ?? undefined, layerId, this.pluginState.opacity);
-    return { layerId, mode: "fallback", reason };
-  }
-
-  private async addPointFallback(variable: VariableSummary): Promise<void> {
-    if (!this.summary) {
-      return;
+    raster: RasterGridResult
+  ): { layerId: string; mode: "maplibre" } {
+    const map = this.app.getMap?.();
+    if (!map) {
+      throw new Error(
+        "This GeoLibre build does not expose addCogLayer or direct map access, so the plugin cannot add a raster layer."
+      );
     }
-    const result = await toPointFeatureCollection(this.summary, {
-      variableName: variable.name,
-      fixedDimensions: this.pluginState.fixedDimensions,
-      maxFeatures: Math.min(this.pluginState.maxPixels, 20000)
-    });
-    const layerName = `${variable.name} points from ${this.pluginState.sourceLabel ?? "NetCDF"}`;
-    this.app.addGeoJsonLayer(layerName, result.collection, this.pluginState.sourceLabel);
-    this.app.fitBounds?.(result.bounds);
+
+    const canvas = renderRasterToCanvas(raster, this.pluginState.colormap);
+    const overlay = addRasterCanvasLayer(map, layerName, canvas, raster, this.pluginState.opacity);
+    generatedRasterOverlays.push({ ...overlay, name: layerName });
+    return { layerId: overlay.layerId, mode: "maplibre" };
   }
 
   private renderLegend(raster: RasterGridResult): void {
@@ -549,6 +556,32 @@ class NetCDFPanel {
     );
     legend.append(ramp, labels);
     dataset.append(legend);
+  }
+
+  private renderOverlayControls(): void {
+    const dataset = this.container?.querySelector(".geolibre-netcdf__dataset");
+    if (!dataset) {
+      return;
+    }
+    dataset.querySelector(".geolibre-netcdf__overlays")?.remove();
+    if (generatedRasterOverlays.length === 0) {
+      return;
+    }
+
+    const controls = el("div", "geolibre-netcdf__overlays");
+    controls.append(el("h4", "", "Map raster overlays"));
+    for (const overlay of generatedRasterOverlays) {
+      const row = el("div", "geolibre-netcdf__overlay-row");
+      row.append(el("span", "", overlay.name));
+      row.append(
+        button("Remove", () => {
+          removeGeneratedRasterOverlay(this.app.getMap?.(), overlay.layerId);
+          this.renderOverlayControls();
+        })
+      );
+      controls.append(row);
+    }
+    dataset.append(controls);
   }
 
   private selectedVariable(): VariableSummary | undefined {
@@ -597,93 +630,6 @@ function isSpatialDimension(name: string): boolean {
   );
 }
 
-function rasterToCellFeatureCollection(
-  raster: RasterGridResult,
-  colorMapName: ColorMapName
-): FeatureCollection {
-  const lonEdges = centersToEdges(raster.lonCenters);
-  const latEdges = centersToEdges(raster.latCenters);
-  const [minValue, maxValue] = raster.valueRange;
-  const span = maxValue - minValue || 1;
-  const features: FeatureCollection["features"] = [];
-
-  for (let row = 0; row < raster.height; row += 1) {
-    const north = Math.max(latEdges[row], latEdges[row + 1]);
-    const south = Math.min(latEdges[row], latEdges[row + 1]);
-    for (let column = 0; column < raster.width; column += 1) {
-      const value = raster.values[row * raster.width + column];
-      if (!Number.isFinite(value)) {
-        continue;
-      }
-      const west = Math.min(lonEdges[column], lonEdges[column + 1]);
-      const east = Math.max(lonEdges[column], lonEdges[column + 1]);
-      const color = rgbToCss(sampleColorMap(colorMapName, (value - minValue) / span));
-      features.push({
-        type: "Feature",
-        geometry: {
-          type: "Polygon",
-          coordinates: [
-            [
-              [west, south],
-              [east, south],
-              [east, north],
-              [west, north],
-              [west, south]
-            ]
-          ]
-        },
-        properties: {
-          value,
-          variable: raster.variableName,
-          fill: color
-        }
-      });
-    }
-  }
-
-  return { type: "FeatureCollection", features };
-}
-
-function centersToEdges(centers: number[]): number[] {
-  if (centers.length === 0) {
-    return [];
-  }
-  if (centers.length === 1) {
-    return [centers[0] - 0.5, centers[0] + 0.5];
-  }
-
-  const edges = new Array<number>(centers.length + 1);
-  for (let index = 1; index < centers.length; index += 1) {
-    edges[index] = (centers[index - 1] + centers[index]) / 2;
-  }
-  edges[0] = centers[0] - (edges[1] - centers[0]);
-  edges[centers.length] =
-    centers[centers.length - 1] + (centers[centers.length - 1] - edges[centers.length - 1]);
-  return edges;
-}
-
-function styleCellLayer(map: GeoLibreMapLike | undefined, layerId: string, opacity: number): void {
-  const apply = () => {
-    try {
-      if (!map?.getLayer(layerId)) {
-        return;
-      }
-      map.setPaintProperty?.(layerId, "fill-color", ["get", "fill"]);
-      map.setPaintProperty?.(layerId, "fill-opacity", Math.max(0, Math.min(1, opacity)));
-      map.setPaintProperty?.(layerId, "fill-outline-color", ["get", "fill"]);
-    } catch {
-      // GeoLibre may wrap the returned id or manage styling asynchronously.
-    }
-  };
-  apply();
-  window.setTimeout(apply, 250);
-  window.setTimeout(apply, 1000);
-}
-
-function rgbToCss(color: [number, number, number]): string {
-  return `rgb(${color[0]}, ${color[1]}, ${color[2]})`;
-}
-
 function toCogColorMap(colorMapName: ColorMapName): string {
   const colorMaps: Record<ColorMapName, string> = {
     temperature: "spectral",
@@ -701,10 +647,10 @@ function revokeGeneratedRasterUrls(): void {
   }
 }
 
-function addRasterImageLayer(
+function addRasterCanvasLayer(
   map: GeoLibreMapLike,
   name: string,
-  imageUrl: string,
+  canvas: HTMLCanvasElement,
   raster: RasterGridResult,
   opacity: number
 ): { sourceId: string; layerId: string } {
@@ -714,14 +660,15 @@ function addRasterImageLayer(
   const [west, south, east, north] = raster.bounds;
 
   map.addSource(sourceId, {
-    type: "image",
-    url: imageUrl,
+    type: "canvas",
+    canvas,
     coordinates: [
       [west, north],
       [east, north],
       [east, south],
       [west, south]
-    ]
+    ],
+    animate: false
   });
   map.addLayer({
     id: layerId,
@@ -739,7 +686,7 @@ function addRasterImageLayer(
   return { sourceId, layerId };
 }
 
-function renderRasterToDataUrl(raster: RasterGridResult, colorMapName: ColorMapName): string {
+function renderRasterToCanvas(raster: RasterGridResult, colorMapName: ColorMapName): HTMLCanvasElement {
   const canvas = document.createElement("canvas");
   canvas.width = raster.width;
   canvas.height = raster.height;
@@ -766,7 +713,31 @@ function renderRasterToDataUrl(raster: RasterGridResult, colorMapName: ColorMapN
   }
 
   context.putImageData(image, 0, 0);
-  return canvas.toDataURL("image/png");
+  return canvas;
+}
+
+function removeGeneratedRasterOverlay(map: GeoLibreMapLike | undefined, layerId: string): void {
+  const index = generatedRasterOverlays.findIndex((overlay) => overlay.layerId === layerId);
+  if (index < 0) {
+    return;
+  }
+  const [overlay] = generatedRasterOverlays.splice(index, 1);
+  try {
+    if (map?.getLayer(overlay.layerId)) {
+      map.removeLayer(overlay.layerId);
+    }
+    if (map?.getSource(overlay.sourceId)) {
+      map.removeSource(overlay.sourceId);
+    }
+  } catch {
+    // If GeoLibre already reset the map style, the overlay may already be gone.
+  }
+}
+
+function removeAllGeneratedRasterOverlays(map: GeoLibreMapLike | undefined): void {
+  for (const overlay of [...generatedRasterOverlays]) {
+    removeGeneratedRasterOverlay(map, overlay.layerId);
+  }
 }
 
 function renderColorRamp(colorMapName: ColorMapName): HTMLElement {

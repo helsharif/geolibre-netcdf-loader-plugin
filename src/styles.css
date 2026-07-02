@@ -101,6 +101,42 @@
   gap: 4px;
 }
 
+.geolibre-netcdf__overlays {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px solid #d8dde6;
+  padding-top: 10px;
+}
+
+.geolibre-netcdf__overlays h4 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.geolibre-netcdf__overlay-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.geolibre-netcdf__overlay-row span {
+  overflow: hidden;
+  color: #596579;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.geolibre-netcdf__overlay-row button {
+  min-height: 28px;
+  padding: 4px 9px;
+  background: #fff;
+  border-color: #b9c2d0;
+  color: #18212f;
+}
+
 .geolibre-netcdf__legend-labels {
   display: flex;
   justify-content: space-between;

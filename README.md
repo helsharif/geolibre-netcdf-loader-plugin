@@ -12,21 +12,21 @@ Developed by **Husayn El Sharif**.
 - Read NetCDF4/HDF5 files with `h5wasm`.
 - Detect common latitude and longitude coordinate variables.
 - Select non-spatial dimension indexes such as `time`, `level`, or `depth`.
-- Render selected slices as temporary GeoTIFF/COG-style raster layers through GeoLibre's native `addCogLayer` API.
-- Fall back to colored cell polygons on older GeoLibre builds that do not expose `addCogLayer`.
+- Render selected slices as temporary GeoTIFF/COG-style raster layers through GeoLibre's native `addCogLayer` API when available.
+- Render as true MapLibre canvas raster overlays when the installed GeoLibre build does not expose `addCogLayer`.
 - Render with Panoply-inspired color ramps:
   - Temperature
   - Viridis
   - Turbo
   - Blue-red
   - Grayscale
-- Register output through GeoLibre's native layer path so it appears in the Layers panel.
+- Use GeoLibre's native layer path when available, with a plugin-managed raster overlay path for older builds.
 
 ## Rendering Approach
 
 The preferred path converts the selected NetCDF slice into an in-memory, georeferenced single-band GeoTIFF and registers it through GeoLibre's native `addCogLayer` helper. This produces an actual raster layer in GeoLibre, with raster styling and layer-store integration.
 
-For compatibility, the plugin keeps a fallback path that converts the same grid into colored GeoJSON cell polygons. That fallback is less ideal because GeoLibre treats it as a vector layer, but it is useful on older builds or host variants without native raster helpers.
+If the installed GeoLibre build does not expose `addCogLayer`, the plugin renders the selected grid as a MapLibre `canvas` raster source and `raster` layer. This is still raster rendering, not a vector fallback. Because this path bypasses GeoLibre's layer store, the layer is managed from the plugin panel rather than the left Layers panel.
 
 ## Install
 
@@ -38,7 +38,7 @@ Download or build the plugin zip, then install it in GeoLibre Desktop:
 4. Select the generated zip:
 
 ```text
-geolibre-plugin/geolibre-netcdf-0.4.0.zip
+geolibre-plugin/geolibre-netcdf-0.4.1.zip
 ```
 
 You can also add the unpacked development directory:
@@ -57,7 +57,7 @@ geolibre-plugin
 6. Choose a colormap and opacity.
 7. Click **Add raster layer**.
 
-The layer should appear in GeoLibre's Layers panel and on the map.
+On GeoLibre builds with `addCogLayer`, the layer should appear in GeoLibre's Layers panel and on the map. On builds without `addCogLayer`, the raster appears on the map as a plugin-managed MapLibre overlay and can be removed from the NetCDF panel.
 
 ## Build From Source
 
@@ -69,7 +69,7 @@ npm run package:geolibre
 The packaged GeoLibre plugin archive is written to:
 
 ```text
-geolibre-plugin/geolibre-netcdf-0.4.0.zip
+geolibre-plugin/geolibre-netcdf-0.4.1.zip
 ```
 
 ## Development
@@ -94,7 +94,7 @@ The test suite includes a few pure grid helper checks. If a local sample file ex
 - Classic NetCDF3/CDF files are detected but not rendered in version 1.
 - Large multidimensional files are read in the browser/WebView, so very large arrays may be slow or memory-heavy.
 - Curvilinear grids and projected coordinates are not fully supported yet; the current renderer expects latitude and longitude coordinates.
-- Native raster rendering requires a GeoLibre build that exposes `addCogLayer`; otherwise the plugin falls back to colored GeoJSON cell polygons.
+- Full GeoLibre Layers-panel integration requires a GeoLibre build that exposes `addCogLayer`; older builds use a plugin-managed MapLibre raster overlay instead.
 
 ## Repository Topics
 
