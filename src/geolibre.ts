@@ -113,7 +113,7 @@ interface GeneratedRasterOverlay {
 export const plugin: GeoLibrePlugin = {
   id: PLUGIN_ID,
   name: "NetCDF Loader",
-  version: "0.5.1",
+  version: "0.5.2",
   urlParameterNames: [NETCDF_URL_PARAM],
   activate(app) {
     unregisterPanel = app.registerRightPanel?.({

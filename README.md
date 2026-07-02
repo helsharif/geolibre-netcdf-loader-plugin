@@ -11,6 +11,7 @@ Developed by **Husayn El Sharif**.
 - Detect classic NetCDF3/CDF files and explain that they are not supported in version 1.
 - Read NetCDF4/HDF5 files with `h5wasm`.
 - Detect common latitude and longitude coordinate variables.
+- Render float and integer climate rasters, including packed unsigned integer grids with scale/offset metadata.
 - Select non-spatial dimension indexes such as `time`, `level`, or `depth`.
 - Choose between a GeoLibre-registered raster layer that appears in the left Layers panel and a direct MapLibre raster overlay.
 - Register plugin-owned raster layers with GeoLibre through `registerExternalNativeLayer`.
@@ -39,7 +40,7 @@ Download or build the plugin zip, then install it in GeoLibre Desktop:
 4. Select the generated zip:
 
 ```text
-geolibre-plugin/geolibre-netcdf-0.5.1.zip
+geolibre-plugin/geolibre-netcdf-0.5.2.zip
 ```
 
 You can also add the unpacked development directory:
@@ -71,7 +72,7 @@ npm run package:geolibre
 The packaged GeoLibre plugin archive is written to:
 
 ```text
-geolibre-plugin/geolibre-netcdf-0.5.1.zip
+geolibre-plugin/geolibre-netcdf-0.5.2.zip
 ```
 
 ## Development

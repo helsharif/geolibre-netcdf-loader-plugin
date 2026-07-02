@@ -503,7 +503,7 @@ function isCoordinateVariableName(name: string): boolean {
 }
 
 function isNumericDtype(dtype: string): boolean {
-  return /[ifud]/i.test(dtype);
+  return /[bBhHiIlLqQfFd]/.test(dtype);
 }
 
 function numericArray(values: OutputData | null): number[] {

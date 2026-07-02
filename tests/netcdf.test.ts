@@ -86,6 +86,26 @@ describe("h5wasm NetCDF4/HDF5 files", () => {
       closeNetCDF(summary);
     }
   });
+
+  it("treats unsigned integer NetCDF raster variables as renderable", async () => {
+    const fileBuffer = await createUnsignedIntegerFixtureFile();
+    const summary = await summarizeNetCDF(fileBuffer);
+
+    try {
+      expect(summary.dataVariables.map((candidate) => candidate.name)).toContain("potential_evapotranspiration");
+
+      const raster = await toRasterGrid(summary, {
+        variableName: "potential_evapotranspiration",
+        fixedDimensions: { day: 0 },
+        maxPixels: 1000000
+      });
+      expect(raster.width).toBe(3);
+      expect(raster.height).toBe(2);
+      expect(raster.valueRange).toEqual([1, 6]);
+    } finally {
+      closeNetCDF(summary);
+    }
+  });
 });
 
 describe("GeoTIFF output", () => {
@@ -143,6 +163,44 @@ async function createFixtureFile(): Promise<ArrayBuffer> {
     data.attach_scale(2, "lon");
     data.create_attribute("long_name", "Mean air temperature");
     data.create_attribute("units", "degree_Celsius");
+    file.flush();
+    file.close();
+
+    const buffer = readFileSync(filePath);
+    return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+async function createUnsignedIntegerFixtureFile(): Promise<ArrayBuffer> {
+  await h5wasm.ready;
+  const dir = mkdtempSync(join(tmpdir(), "geolibre-netcdf-uint-"));
+  const filePath = join(dir, "fixture-uint.nc");
+  try {
+    const file = new h5wasm.File(filePath, "w");
+    const day = file.create_dataset({ name: "day", data: new Float64Array([0]), shape: [1] });
+    const lat = file.create_dataset({ name: "lat", data: new Float64Array([34, 35]), shape: [2] });
+    const lon = file.create_dataset({ name: "lon", data: new Float64Array([-5, -4, -3]), shape: [3] });
+    day.make_scale("day");
+    lat.make_scale("lat");
+    lon.make_scale("lon");
+    lat.create_attribute("units", "degrees_north");
+    lon.create_attribute("units", "degrees_east");
+    const data = file.create_dataset({
+      name: "potential_evapotranspiration",
+      data: new Uint16Array([1, 2, 3, 4, 5, 6]),
+      shape: [1, 2, 3]
+    });
+    data.attach_scale(0, "day");
+    data.attach_scale(1, "lat");
+    data.attach_scale(2, "lon");
+    data.create_attribute("long_name", "pet");
+    data.create_attribute("units", "mm");
+    data.create_attribute("_FillValue", new Uint16Array([32767]));
+    data.create_attribute("missing_value", new Uint16Array([32767]));
+    data.create_attribute("scale_factor", 1);
+    data.create_attribute("add_offset", 0);
     file.flush();
     file.close();
 
