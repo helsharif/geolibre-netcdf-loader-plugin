@@ -6,6 +6,7 @@ import {
   toRasterGrid,
   variableLabel
 } from "./netcdf";
+import { rasterGridToGeoTiffBlob } from "./geotiff";
 import type {
   FeatureCollection,
   GeoLibreAppAPI,
@@ -96,11 +97,12 @@ let panelView: NetCDFPanel | undefined;
 let mapControl: NetCDFMapControl | undefined;
 let floatingPanel: HTMLElement | undefined;
 let floatingPanelView: NetCDFPanel | undefined;
+const generatedRasterUrls: string[] = [];
 
 export const plugin: GeoLibrePlugin = {
   id: PLUGIN_ID,
   name: "NetCDF Loader",
-  version: "0.2.1",
+  version: "0.3.0",
   urlParameterNames: [NETCDF_URL_PARAM],
   activate(app) {
     unregisterPanel = app.registerRightPanel?.({
@@ -139,6 +141,7 @@ export const plugin: GeoLibrePlugin = {
     if (mapControl) {
       app.removeMapControl?.(mapControl);
     }
+    revokeGeneratedRasterUrls();
     closeFloatingPanel();
     unregisterMenu?.();
     unregisterPanel?.();
@@ -368,7 +371,7 @@ class NetCDFPanel {
       dataset.append(colorLabel, opacityLabel, maxLabel);
     }
 
-    const addButton = button("Add raster layer", () => this.addLayer());
+    const addButton = button("Add raster layer", () => void this.addLayer());
     addButton.disabled = !selectedVariable;
     dataset.append(addButton);
 
@@ -434,7 +437,7 @@ class NetCDFPanel {
     }
   }
 
-  private addLayer(): void {
+  private async addLayer(): Promise<void> {
     if (!this.summary) {
       this.setStatus("Load a dataset first.", "error");
       return;
@@ -452,15 +455,15 @@ class NetCDFPanel {
         maxPixels: this.pluginState.maxPixels
       });
       const layerName = `${variable.name} raster from ${this.pluginState.sourceLabel ?? "NetCDF"}`;
-      const gridLayer = rasterToCellFeatureCollection(raster, this.pluginState.colormap);
-      const layerId = this.app.addGeoJsonLayer(layerName, gridLayer, this.pluginState.sourceLabel);
-      styleCellLayer(this.app.getMap?.() ?? undefined, layerId, this.pluginState.opacity);
+      const layerId = this.app.addCogLayer
+        ? await this.addNativeRasterLayer(layerName, raster)
+        : this.addVectorRasterFallback(layerName, raster);
       this.app.fitBounds?.(raster.bounds);
       this.renderLegend(raster);
       const sampling =
         raster.sampledEvery > 1 ? ` Sampled every ${raster.sampledEvery} grid cells.` : "";
       this.setStatus(
-        `Added raster grid ${layerId} (${raster.width} x ${raster.height}, ${raster.validValueCount} cells).${sampling}`,
+        `Added raster layer ${layerId} (${raster.width} x ${raster.height}, ${raster.validValueCount} cells).${sampling}`,
         "ok"
       );
     } catch (error) {
@@ -471,6 +474,35 @@ class NetCDFPanel {
         this.setStatus(`${errorMessage(error)} Fallback also failed: ${errorMessage(fallbackError)}`, "error");
       }
     }
+  }
+
+  private async addNativeRasterLayer(layerName: string, raster: RasterGridResult): Promise<string> {
+    if (!this.app.addCogLayer) {
+      return this.addVectorRasterFallback(layerName, raster);
+    }
+
+    try {
+      const blob = rasterGridToGeoTiffBlob(raster);
+      const url = URL.createObjectURL(blob);
+      generatedRasterUrls.push(url);
+      return await this.app.addCogLayer(layerName, url, {
+        bands: "1",
+        colormap: toCogColorMap(this.pluginState.colormap),
+        rescaleMin: raster.valueRange[0],
+        rescaleMax: raster.valueRange[1],
+        nodata: Number.NaN,
+        opacity: this.pluginState.opacity
+      });
+    } catch {
+      return this.addVectorRasterFallback(layerName, raster);
+    }
+  }
+
+  private addVectorRasterFallback(layerName: string, raster: RasterGridResult): string {
+    const gridLayer = rasterToCellFeatureCollection(raster, this.pluginState.colormap);
+    const layerId = this.app.addGeoJsonLayer(layerName, gridLayer, this.pluginState.sourceLabel);
+    styleCellLayer(this.app.getMap?.() ?? undefined, layerId, this.pluginState.opacity);
+    return layerId;
   }
 
   private addPointFallback(variable: VariableSummary): void {
@@ -635,6 +667,23 @@ function styleCellLayer(map: GeoLibreMapLike | undefined, layerId: string, opaci
 
 function rgbToCss(color: [number, number, number]): string {
   return `rgb(${color[0]}, ${color[1]}, ${color[2]})`;
+}
+
+function toCogColorMap(colorMapName: ColorMapName): string {
+  const colorMaps: Record<ColorMapName, string> = {
+    temperature: "spectral",
+    viridis: "viridis",
+    turbo: "turbo",
+    blueRed: "rdylbu",
+    grayscale: "gray"
+  };
+  return colorMaps[colorMapName];
+}
+
+function revokeGeneratedRasterUrls(): void {
+  for (const url of generatedRasterUrls.splice(0)) {
+    URL.revokeObjectURL(url);
+  }
 }
 
 function addRasterImageLayer(

@@ -1,6 +1,6 @@
 # GeoLibre NetCDF Loader Plugin
 
-GeoLibre NetCDF Loader Plugin adds NetCDF climate-grid support to GeoLibre Desktop. It reads local or HTTPS NetCDF files, lets you choose a variable and 2D slice, and renders the result as a color-mapped raster-style map layer.
+GeoLibre NetCDF Loader Plugin adds NetCDF climate-grid support to GeoLibre Desktop. It reads local or HTTPS NetCDF files, lets you choose a variable and 2D slice, and renders the result as a native raster layer when GeoLibre's raster API is available.
 
 Developed by **Husayn El Sharif**.
 
@@ -12,7 +12,9 @@ Developed by **Husayn El Sharif**.
 - Read many NetCDF4/HDF5 files with `jsfive`.
 - Detect common latitude and longitude coordinate variables.
 - Select non-spatial dimension indexes such as `time`, `level`, or `depth`.
-- Render selected slices with Panoply-inspired color ramps:
+- Render selected slices as temporary GeoTIFF/COG-style raster layers through GeoLibre's native `addCogLayer` API.
+- Fall back to colored cell polygons on older GeoLibre builds that do not expose `addCogLayer`.
+- Render with Panoply-inspired color ramps:
   - Temperature
   - Viridis
   - Turbo
@@ -20,11 +22,11 @@ Developed by **Husayn El Sharif**.
   - Grayscale
 - Register output through GeoLibre's native layer path so it appears in the Layers panel.
 
-## Current Rendering Approach
+## Rendering Approach
 
-GeoLibre external plugins can reliably register vector data through `addGeoJsonLayer`. For maximum compatibility with GeoLibre Desktop, this plugin currently converts the selected 2D NetCDF grid into colored cell polygons. Visually this behaves like a raster grid, while remaining visible and manageable in GeoLibre's native Layers panel.
+The preferred path converts the selected NetCDF slice into an in-memory, georeferenced single-band GeoTIFF and registers it through GeoLibre's native `addCogLayer` helper. This produces an actual raster layer in GeoLibre, with raster styling and layer-store integration.
 
-Future versions may add true client-side raster output through COG, tiled image, or deck.gl rendering paths as GeoLibre's plugin raster APIs mature.
+For compatibility, the plugin keeps a fallback path that converts the same grid into colored GeoJSON cell polygons. That fallback is less ideal because GeoLibre treats it as a vector layer, but it is useful on older builds or host variants without native raster helpers.
 
 ## Install
 
@@ -36,7 +38,7 @@ Download or build the plugin zip, then install it in GeoLibre Desktop:
 4. Select the generated zip:
 
 ```text
-geolibre-plugin/geolibre-netcdf-0.2.1.zip
+geolibre-plugin/geolibre-netcdf-0.3.0.zip
 ```
 
 You can also add the unpacked development directory:
@@ -67,7 +69,7 @@ npm run package:geolibre
 The packaged GeoLibre plugin archive is written to:
 
 ```text
-geolibre-plugin/geolibre-netcdf-0.2.1.zip
+geolibre-plugin/geolibre-netcdf-0.3.0.zip
 ```
 
 ## Development
@@ -91,7 +93,7 @@ The test suite includes a few pure grid helper checks. If a local sample file ex
 - NetCDF4/HDF5 support depends on `jsfive`, which does not implement every HDF5 feature or datatype.
 - Large multidimensional files are read in the browser/WebView, so very large arrays may be slow or memory-heavy.
 - Curvilinear grids and projected coordinates are not fully supported yet; the current renderer expects latitude and longitude coordinates.
-- The raster-style layer is currently represented as colored GeoJSON cell polygons for GeoLibre layer-store compatibility.
+- Native raster rendering requires a GeoLibre build that exposes `addCogLayer`; otherwise the plugin falls back to colored GeoJSON cell polygons.
 
 ## Repository Topics
 

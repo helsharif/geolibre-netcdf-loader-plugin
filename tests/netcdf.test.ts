@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { fromArrayBuffer } from "geotiff";
 import {
   flatIndexFor,
   getDefaultFixedDimensions,
@@ -8,6 +9,7 @@ import {
   toPointFeatureCollection,
   toRasterGrid
 } from "../src/netcdf";
+import { rasterGridToGeoTiffBlob } from "../src/geotiff";
 import type { VariableSummary } from "../src/netcdf";
 
 const variable: VariableSummary = {
@@ -76,5 +78,28 @@ describe("NetCDF4/HDF5 files", () => {
     expect(raster.valueRange[0]).toBeLessThan(raster.valueRange[1]);
     expect(raster.bounds[0]).toBeLessThan(raster.bounds[2]);
     expect(raster.bounds[1]).toBeLessThan(raster.bounds[3]);
+  }, 15000);
+
+  it.skipIf(!existsSync(samplePath))("writes a georeferenced GeoTIFF raster", async () => {
+    const buffer = readFileSync(samplePath);
+    const arrayBuffer = buffer.buffer.slice(
+      buffer.byteOffset,
+      buffer.byteOffset + buffer.byteLength
+    );
+    const summary = summarizeNetCDF(arrayBuffer);
+    const raster = toRasterGrid(summary, {
+      variableName: "tavg",
+      fixedDimensions: { time: 0 },
+      maxPixels: 1000000
+    });
+    const blob = rasterGridToGeoTiffBlob(raster);
+    const tiff = await fromArrayBuffer(await blob.arrayBuffer());
+    const image = await tiff.getImage();
+
+    expect(image.getWidth()).toBe(raster.width);
+    expect(image.getHeight()).toBe(raster.height);
+    expect(image.getBoundingBox()).toEqual(raster.bounds);
+    const geoKeys = image.getGeoKeys();
+    expect(geoKeys?.GeographicTypeGeoKey).toBe(4326);
   }, 15000);
 });

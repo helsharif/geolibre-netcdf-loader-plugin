@@ -26,6 +26,11 @@ export interface GeoLibreAppAPI {
     data: FeatureCollection,
     sourcePath?: string
   ) => string;
+  addCogLayer?: (
+    name: string,
+    url: string,
+    options?: GeoLibreCogLayerOptions
+  ) => Promise<string>;
   fetchArrayBuffer?: (url: string) => Promise<ArrayBuffer>;
   fitBounds?: (bounds: [number, number, number, number]) => void;
   getMap?: () => GeoLibreMapLike;
@@ -45,6 +50,16 @@ export interface GeoLibreAppAPI {
 export interface GeoLibreMapControl {
   onAdd: (map: unknown) => HTMLElement;
   onRemove: () => void;
+}
+
+export interface GeoLibreCogLayerOptions {
+  bands?: string;
+  colormap?: string;
+  rescaleMin?: number;
+  rescaleMax?: number;
+  nodata?: number;
+  opacity?: number;
+  beforeLayerId?: string;
 }
 
 export interface GeoLibreMapLike {
