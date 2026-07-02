@@ -254,7 +254,8 @@ export async function toRasterGrid(
     if (index === latDimensionIndex || index === lonDimensionIndex) {
       return [0, dimension.size, sampledEvery] as [number, number, number];
     }
-    return [clampIndex(selection.fixedDimensions[dimension.name] ?? 0, dimension.size)] as [number];
+    const selected = clampIndex(selection.fixedDimensions[dimension.name] ?? 0, dimension.size);
+    return [selected, selected + 1, 1] as [number, number, number];
   });
   const sliceValues = numericArray(sourceDataset.slice(sliceRanges));
   const latAscending = (latValues[0] ?? 0) <= (latValues[latCount - 1] ?? 0);
