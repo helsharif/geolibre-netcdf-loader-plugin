@@ -99,6 +99,7 @@ let panelView: NetCDFPanel | undefined;
 let mapControl: NetCDFMapControl | undefined;
 let floatingPanel: HTMLElement | undefined;
 let floatingPanelView: NetCDFPanel | undefined;
+let savedMapProjection: "globe" | "mercator" | undefined;
 const generatedRasterOverlays: GeneratedRasterOverlay[] = [];
 
 interface GeneratedRasterOverlay {
@@ -113,7 +114,7 @@ interface GeneratedRasterOverlay {
 export const plugin: GeoLibrePlugin = {
   id: PLUGIN_ID,
   name: "NetCDF Loader",
-  version: "0.5.3",
+  version: "0.5.4",
   urlParameterNames: [NETCDF_URL_PARAM],
   activate(app) {
     unregisterPanel = app.registerRightPanel?.({
@@ -154,6 +155,7 @@ export const plugin: GeoLibrePlugin = {
     }
     unregisterRegisteredRasterOverlays(app);
     removeAllGeneratedRasterOverlays(app.getMap?.());
+    restoreMapProjection(app);
     closeFloatingPanel();
     unregisterMenu?.();
     unregisterPanel?.();
@@ -534,6 +536,7 @@ class NetCDFPanel {
       );
     }
 
+    ensureMercatorProjection(this.app);
     const canvas = renderRasterToCanvas(raster, this.pluginState.colormap);
     const overlay = addRasterCanvasLayer(map, layerName, canvas, raster, this.pluginState.opacity);
     const identifyOverlay = addRasterIdentifyLayer(map, layerName, raster, overlay.layerId);
@@ -579,6 +582,7 @@ class NetCDFPanel {
       );
     }
 
+    ensureMercatorProjection(this.app);
     const canvas = renderRasterToCanvas(raster, this.pluginState.colormap);
     const overlay = addRasterCanvasLayer(map, layerName, canvas, raster, this.pluginState.opacity);
     generatedRasterOverlays.push({ ...overlay, name: layerName, registered: false });
@@ -873,6 +877,26 @@ function unregisterRegisteredRasterOverlays(app: GeoLibreAppAPI): void {
   for (const overlay of generatedRasterOverlays.filter((entry) => entry.registered)) {
     app.unregisterExternalNativeLayer?.(overlay.layerId);
   }
+}
+
+function ensureMercatorProjection(app: GeoLibreAppAPI): void {
+  if (!app.setMapProjection) {
+    return;
+  }
+  if (savedMapProjection === undefined) {
+    savedMapProjection = app.getMapProjection?.() ?? "globe";
+  }
+  if (app.getMapProjection?.() !== "mercator") {
+    app.setMapProjection("mercator");
+  }
+}
+
+function restoreMapProjection(app: GeoLibreAppAPI): void {
+  if (savedMapProjection === undefined) {
+    return;
+  }
+  app.setMapProjection?.(savedMapProjection);
+  savedMapProjection = undefined;
 }
 
 function renderColorRamp(colorMapName: ColorMapName): HTMLElement {

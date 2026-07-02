@@ -38,6 +38,8 @@ export interface GeoLibreAppAPI {
   fetchArrayBuffer?: (url: string) => Promise<ArrayBuffer>;
   fitBounds?: (bounds: [number, number, number, number]) => void;
   getMap?: () => GeoLibreMapLike;
+  setMapProjection?: (projection: "globe" | "mercator") => void;
+  getMapProjection?: () => "globe" | "mercator";
   addMapControl?: (
     control: GeoLibreMapControl,
     position?: GeoLibreMapControlPosition

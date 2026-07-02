@@ -541,37 +541,25 @@ function clampIndex(value: number, size: number): number {
 }
 
 function getGridBounds(lonValues: number[], latValues: number[]): [number, number, number, number] {
-  const validLon = lonValues.filter(Number.isFinite);
-  const validLat = latValues.filter(Number.isFinite);
-  if (validLon.length === 0 || validLat.length === 0) {
-    throw new Error("Latitude or longitude coordinate values are missing.");
-  }
-
-  const west = Math.min(...validLon);
-  const east = Math.max(...validLon);
-  const south = Math.min(...validLat);
-  const north = Math.max(...validLat);
-  return [
-    west - coordinatePadding(validLon),
-    south - coordinatePadding(validLat),
-    east + coordinatePadding(validLon),
-    north + coordinatePadding(validLat)
-  ];
+  const [west, east] = coordinateExtentFromCenters(lonValues);
+  const [south, north] = coordinateExtentFromCenters(latValues);
+  return [west, south, east, north];
 }
 
-function coordinatePadding(values: number[]): number {
-  if (values.length < 2) {
-    return 0;
+function coordinateExtentFromCenters(values: number[]): [number, number] {
+  const valid = values.filter(Number.isFinite);
+  if (valid.length === 0) {
+    throw new Error("Latitude or longitude coordinate values are missing.");
   }
-  const sorted = [...values].sort((a, b) => a - b);
-  let smallestStep = Number.POSITIVE_INFINITY;
-  for (let index = 1; index < sorted.length; index += 1) {
-    const step = Math.abs(sorted[index] - sorted[index - 1]);
-    if (step > 0) {
-      smallestStep = Math.min(smallestStep, step);
-    }
+  if (valid.length === 1) {
+    return [valid[0], valid[0]];
   }
-  return Number.isFinite(smallestStep) ? smallestStep / 2 : 0;
+
+  const firstStep = valid[1] - valid[0];
+  const lastStep = valid[valid.length - 1] - valid[valid.length - 2];
+  const firstEdge = valid[0] - firstStep / 2;
+  const lastEdge = valid[valid.length - 1] + lastStep / 2;
+  return [Math.min(firstEdge, lastEdge), Math.max(firstEdge, lastEdge)];
 }
 
 function isDataset(entity: Entity | null): entity is Dataset {
