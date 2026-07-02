@@ -10,6 +10,7 @@ import {
   detectNetCDFSignature,
   flatIndexFor,
   getDefaultFixedDimensions,
+  getTimeAxisInfo,
   summarizeNetCDF,
   toRasterGrid
 } from "../src/netcdf";
@@ -71,6 +72,11 @@ describe("h5wasm NetCDF4/HDF5 files", () => {
       expect(summary.latVariable?.name).toBe("lat");
       expect(summary.lonVariable?.name).toBe("lon");
       expect(summary.dataVariables.map((candidate) => candidate.name)).toContain("tavg");
+      const timeAxis = getTimeAxisInfo(summary, summary.dataVariables[0].dimensions[0]);
+      expect(timeAxis?.dates?.map((date) => date.toISOString().slice(0, 10))).toEqual([
+        "2000-01-01",
+        "2000-01-02"
+      ]);
 
       const raster = await toRasterGrid(summary, {
         variableName: "tavg",
@@ -144,6 +150,9 @@ async function createFixtureFile(): Promise<ArrayBuffer> {
     const lat = file.create_dataset({ name: "lat", data: new Float64Array([34, 35]), shape: [2] });
     const lon = file.create_dataset({ name: "lon", data: new Float64Array([-5, -4, -3]), shape: [3] });
     time.make_scale("time");
+    time.create_attribute("units", "days since 2000-01-01 00:00:00");
+    time.create_attribute("standard_name", "time");
+    time.create_attribute("calendar", "gregorian");
     lat.make_scale("lat");
     lon.make_scale("lon");
     lat.create_attribute("units", "degrees_north");

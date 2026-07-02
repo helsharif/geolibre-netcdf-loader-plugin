@@ -2,6 +2,7 @@ import "./styles.css";
 import {
   closeNetCDF,
   getDefaultFixedDimensions,
+  getTimeAxisInfo,
   summarizeNetCDF,
   toRasterGrid,
   variableLabel
@@ -12,7 +13,7 @@ import type {
   GeoLibreMapLike,
   GeoLibrePlugin
 } from "./types/geolibre";
-import type { NetCDFSummary, RasterGridResult, VariableSummary } from "./netcdf";
+import type { DimensionSummary, NetCDFSummary, RasterGridResult, TimeAxisInfo, VariableSummary } from "./netcdf";
 
 const PLUGIN_ID = "geolibre-netcdf";
 const PANEL_ID = "geolibre-netcdf-panel";
@@ -125,7 +126,7 @@ interface GeoLibreMapMouseEvent {
 export const plugin: GeoLibrePlugin = {
   id: PLUGIN_ID,
   name: "NetCDF Loader",
-  version: "0.5.6",
+  version: "0.5.7",
   urlParameterNames: [NETCDF_URL_PARAM],
   activate(app) {
     unregisterPanel = app.registerRightPanel?.({
@@ -445,6 +446,11 @@ class NetCDFPanel {
       if (isSpatialDimension(dimension.name)) {
         continue;
       }
+      const timeAxis = this.summary ? getTimeAxisInfo(this.summary, dimension) : undefined;
+      if (timeAxis) {
+        wrapper.append(this.renderTimeSliceControl(dimension, timeAxis));
+        continue;
+      }
       const label = el(
         "label",
         "geolibre-netcdf__label",
@@ -463,6 +469,77 @@ class NetCDFPanel {
       wrapper.append(label);
     }
     return wrapper;
+  }
+
+  private renderTimeSliceControl(dimension: DimensionSummary, timeAxis: TimeAxisInfo): HTMLElement {
+    const maxIndex = Math.max(0, dimension.size - 1);
+    const wrapper = el("div", "geolibre-netcdf__time-control");
+    const heading = el("div", "geolibre-netcdf__time-heading");
+    heading.append(
+      el("span", "", dimension.name),
+      el("strong", "", timeDisplayLabel(timeAxis, this.fixedDimensionIndex(dimension)))
+    );
+
+    const slider = document.createElement("input");
+    slider.type = "range";
+    slider.min = "0";
+    slider.max = String(maxIndex);
+    slider.step = "1";
+
+    const indexInput = document.createElement("input");
+    indexInput.type = "number";
+    indexInput.min = "0";
+    indexInput.max = String(maxIndex);
+    indexInput.step = "1";
+
+    const dateInput = document.createElement("input");
+    dateInput.type = "date";
+    dateInput.disabled = !timeAxis.dates;
+
+    const syncControls = (index: number) => {
+      const clamped = clampPanelIndex(index, dimension.size);
+      this.pluginState.fixedDimensions[dimension.name] = clamped;
+      slider.value = String(clamped);
+      indexInput.value = String(clamped);
+      heading.querySelector("strong")!.textContent = timeDisplayLabel(timeAxis, clamped);
+      if (timeAxis.dates) {
+        dateInput.value = dateInputValue(timeAxis.dates[clamped]);
+      }
+    };
+
+    slider.addEventListener("input", () => syncControls(Number(slider.value)));
+    indexInput.addEventListener("change", () => syncControls(Number(indexInput.value)));
+    dateInput.addEventListener("change", () => {
+      if (!timeAxis.dates || !dateInput.value) {
+        return;
+      }
+      syncControls(nearestDateIndex(timeAxis.dates, dateInput.value));
+    });
+
+    const previousButton = button("<", () => syncControls(this.fixedDimensionIndex(dimension) - 1));
+    previousButton.title = "Previous time step";
+    const nextButton = button(">", () => syncControls(this.fixedDimensionIndex(dimension) + 1));
+    nextButton.title = "Next time step";
+
+    const dateLabel = el("label", "geolibre-netcdf__label", "Date");
+    dateLabel.append(dateInput);
+    const indexLabel = el(
+      "label",
+      "geolibre-netcdf__label",
+      `Index (0-${maxIndex})`
+    );
+    indexLabel.append(indexInput);
+
+    const row = el("div", "geolibre-netcdf__time-row");
+    row.append(previousButton, dateLabel, indexLabel, nextButton);
+    const units = el("p", "geolibre-netcdf__muted", `${timeAxis.variableName}: ${timeAxis.units}`);
+    wrapper.append(heading, slider, row, units);
+    syncControls(this.fixedDimensionIndex(dimension));
+    return wrapper;
+  }
+
+  private fixedDimensionIndex(dimension: DimensionSummary): number {
+    return clampPanelIndex(this.pluginState.fixedDimensions[dimension.name] ?? 0, dimension.size);
   }
 
   private async loadFile(file: File): Promise<void> {
@@ -694,6 +771,46 @@ function isSpatialDimension(name: string): boolean {
   return ["lat", "latitude", "y", "nav_lat", "lon", "lng", "long", "longitude", "x", "nav_lon"].includes(
     normalized
   );
+}
+
+function clampPanelIndex(value: number, size: number): number {
+  return Math.max(0, Math.min(Math.max(0, size - 1), Math.trunc(Number.isFinite(value) ? value : 0)));
+}
+
+function timeDisplayLabel(timeAxis: TimeAxisInfo, index: number): string {
+  const value = timeAxis.values[index];
+  const date = timeAxis.dates?.[index];
+  if (date) {
+    return `${formatDateTime(date)} (index ${index})`;
+  }
+  return `${formatNumber(value)} ${timeAxis.units} (index ${index})`;
+}
+
+function dateInputValue(date: Date | undefined): string {
+  if (!date || Number.isNaN(date.getTime())) {
+    return "";
+  }
+  return date.toISOString().slice(0, 10);
+}
+
+function formatDateTime(date: Date): string {
+  const iso = date.toISOString();
+  const time = iso.slice(11, 19);
+  return time === "00:00:00" ? iso.slice(0, 10) : iso.replace(".000Z", "Z");
+}
+
+function nearestDateIndex(dates: Date[], inputValue: string): number {
+  const target = new Date(`${inputValue}T00:00:00Z`).getTime();
+  let bestIndex = 0;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (let index = 0; index < dates.length; index += 1) {
+    const distance = Math.abs(dates[index].getTime() - target);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestIndex = index;
+    }
+  }
+  return bestIndex;
 }
 
 function addRasterCanvasLayer(

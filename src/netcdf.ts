@@ -65,6 +65,15 @@ export interface RasterGridResult {
   sampledEvery: number;
 }
 
+export interface TimeAxisInfo {
+  dimensionName: string;
+  variableName: string;
+  units: string;
+  calendar?: string;
+  values: number[];
+  dates?: Date[];
+}
+
 const LAT_NAMES = new Set(["lat", "latitude", "y", "nav_lat"]);
 const LON_NAMES = new Set(["lon", "lng", "long", "longitude", "x", "nav_lon"]);
 const COORDINATE_NAMES = new Set([
@@ -176,6 +185,40 @@ export function getDefaultFixedDimensions(variable: VariableSummary): Record<str
     }
   }
   return fixed;
+}
+
+export function getTimeAxisInfo(
+  summary: NetCDFSummary,
+  dimension: DimensionSummary
+): TimeAxisInfo | undefined {
+  const timeVariable = summary.variables.find(
+    (variable) =>
+      variable.dimensions.length === 1 &&
+      variable.dimensions[0]?.name === dimension.name &&
+      isTimeVariable(variable)
+  );
+  if (!timeVariable) {
+    return undefined;
+  }
+
+  const values = numericArray(readDataset(summary.handle.file, timeVariable.path).value);
+  if (values.length === 0) {
+    return undefined;
+  }
+
+  const units = String(timeVariable.attributes.units ?? "");
+  const dates = datesFromCfTimeValues(values, units);
+  return {
+    dimensionName: dimension.name,
+    variableName: timeVariable.name,
+    units,
+    calendar:
+      typeof timeVariable.attributes.calendar === "string"
+        ? timeVariable.attributes.calendar
+        : undefined,
+    values,
+    ...(dates ? { dates } : {})
+  };
 }
 
 export async function toPointFeatureCollection(
@@ -491,12 +534,74 @@ function isLongitudeVariable(variable: VariableSummary): boolean {
   return isLonLike(variable.name) || standardName === "longitude" || units.includes("degrees_east");
 }
 
+function isTimeVariable(variable: VariableSummary): boolean {
+  const units = String(variable.attributes.units ?? "").toLowerCase();
+  const standardName = String(variable.attributes.standard_name ?? "").toLowerCase();
+  const axis = String(variable.attributes.axis ?? "").toLowerCase();
+  return (
+    variable.name.toLowerCase() === "time" ||
+    standardName === "time" ||
+    axis === "t" ||
+    /\b(seconds|minutes|hours|days|months|years)\s+since\b/.test(units)
+  );
+}
+
 function isLatLike(name: string): boolean {
   return LAT_NAMES.has(name.toLowerCase());
 }
 
 function isLonLike(name: string): boolean {
   return LON_NAMES.has(name.toLowerCase());
+}
+
+function datesFromCfTimeValues(values: number[], units: string): Date[] | undefined {
+  const parsed = parseCfTimeUnits(units);
+  if (!parsed) {
+    return undefined;
+  }
+  return values.map((value) => addCfTimeValue(parsed.origin, value, parsed.unit));
+}
+
+function parseCfTimeUnits(units: string): { unit: string; origin: Date } | undefined {
+  const match = units
+    .trim()
+    .match(/^(seconds?|minutes?|hours?|days?|months?|years?)\s+since\s+(.+)$/i);
+  if (!match) {
+    return undefined;
+  }
+  const origin = parseCfOriginDate(match[2]);
+  if (!origin) {
+    return undefined;
+  }
+  return { unit: match[1].toLowerCase(), origin };
+}
+
+function parseCfOriginDate(value: string): Date | undefined {
+  const normalized = value
+    .trim()
+    .replace(/\s+UTC$/i, "Z")
+    .replace(/\s+Z$/i, "Z")
+    .replace(" ", "T");
+  const date = new Date(normalized.endsWith("Z") ? normalized : `${normalized}Z`);
+  return Number.isNaN(date.getTime()) ? undefined : date;
+}
+
+function addCfTimeValue(origin: Date, value: number, unit: string): Date {
+  const date = new Date(origin.getTime());
+  if (unit.startsWith("second")) {
+    date.setUTCSeconds(date.getUTCSeconds() + value);
+  } else if (unit.startsWith("minute")) {
+    date.setUTCMinutes(date.getUTCMinutes() + value);
+  } else if (unit.startsWith("hour")) {
+    date.setUTCHours(date.getUTCHours() + value);
+  } else if (unit.startsWith("day")) {
+    date.setUTCDate(date.getUTCDate() + value);
+  } else if (unit.startsWith("month")) {
+    date.setUTCMonth(date.getUTCMonth() + value);
+  } else if (unit.startsWith("year")) {
+    date.setUTCFullYear(date.getUTCFullYear() + value);
+  }
+  return date;
 }
 
 function isCoordinateVariableName(name: string): boolean {
