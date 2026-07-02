@@ -1,5 +1,6 @@
 import "./styles.css";
 import {
+  closeNetCDF,
   getDefaultFixedDimensions,
   summarizeNetCDF,
   toPointFeatureCollection,
@@ -102,7 +103,7 @@ const generatedRasterUrls: string[] = [];
 export const plugin: GeoLibrePlugin = {
   id: PLUGIN_ID,
   name: "NetCDF Loader",
-  version: "0.3.1",
+  version: "0.4.0",
   urlParameterNames: [NETCDF_URL_PARAM],
   activate(app) {
     unregisterPanel = app.registerRightPanel?.({
@@ -222,6 +223,7 @@ class NetCDFPanel {
 
   destroy(): void {
     this.abortController?.abort();
+    closeNetCDF(this.summary);
   }
 
   async loadFromUrl(urlText: string): Promise<void> {
@@ -239,7 +241,7 @@ class NetCDFPanel {
       const arrayBuffer = this.app.fetchArrayBuffer
         ? await this.app.fetchArrayBuffer(url.href)
         : await fetchArrayBuffer(url.href, this.abortController.signal);
-      this.loadArrayBuffer(arrayBuffer, url.href);
+      await this.loadArrayBuffer(arrayBuffer, url.href);
     } catch (error) {
       this.setStatus(errorMessage(error), "error");
     }
@@ -276,7 +278,7 @@ class NetCDFPanel {
     urlLabel.append(urlRow);
     urlSection.append(urlLabel);
 
-    const status = el("div", "geolibre-netcdf__status", "Choose a NetCDF v3 file to inspect.");
+    const status = el("div", "geolibre-netcdf__status", "Choose a NetCDF4/HDF5 file to inspect.");
     status.dataset.role = "status";
 
     this.container.append(localSection, urlSection, status);
@@ -299,7 +301,7 @@ class NetCDFPanel {
     const meta = el(
       "p",
       "geolibre-netcdf__muted",
-      `${this.summary.format.toUpperCase()}, ${this.summary.dimensions.length} dimensions, ${this.summary.variables.length} variables`
+      `NetCDF4/HDF5, ${this.summary.dimensions.length} dimensions, ${this.summary.variables.length} datasets`
     );
 
     const variableLabelElement = el("label", "geolibre-netcdf__label", "Variable");
@@ -417,15 +419,16 @@ class NetCDFPanel {
   private async loadFile(file: File): Promise<void> {
     this.setStatus(`Reading ${file.name}`, "busy");
     try {
-      this.loadArrayBuffer(await file.arrayBuffer(), file.name);
+      await this.loadArrayBuffer(await file.arrayBuffer(), file.name);
     } catch (error) {
       this.setStatus(errorMessage(error), "error");
     }
   }
 
-  private loadArrayBuffer(arrayBuffer: ArrayBuffer, sourceLabel: string): void {
+  private async loadArrayBuffer(arrayBuffer: ArrayBuffer, sourceLabel: string): Promise<void> {
     try {
-      this.summary = summarizeNetCDF(arrayBuffer);
+      closeNetCDF(this.summary);
+      this.summary = await summarizeNetCDF(arrayBuffer);
       this.pluginState.sourceLabel = sourceLabel;
       this.pluginState.selectedVariable = this.summary.dataVariables[0]?.name;
       const selected = this.selectedVariable();
@@ -449,7 +452,7 @@ class NetCDFPanel {
     }
 
     try {
-      const raster = toRasterGrid(this.summary, {
+      const raster = await toRasterGrid(this.summary, {
         variableName: variable.name,
         fixedDimensions: this.pluginState.fixedDimensions,
         maxPixels: this.pluginState.maxPixels
@@ -472,7 +475,7 @@ class NetCDFPanel {
       );
     } catch (error) {
       try {
-        this.addPointFallback(variable);
+        await this.addPointFallback(variable);
         this.setStatus(`${errorMessage(error)} Added points as a fallback.`, "error");
       } catch (fallbackError) {
         this.setStatus(`${errorMessage(error)} Fallback also failed: ${errorMessage(fallbackError)}`, "error");
@@ -517,11 +520,11 @@ class NetCDFPanel {
     return { layerId, mode: "fallback", reason };
   }
 
-  private addPointFallback(variable: VariableSummary): void {
+  private async addPointFallback(variable: VariableSummary): Promise<void> {
     if (!this.summary) {
       return;
     }
-    const result = toPointFeatureCollection(this.summary, {
+    const result = await toPointFeatureCollection(this.summary, {
       variableName: variable.name,
       fixedDimensions: this.pluginState.fixedDimensions,
       maxFeatures: Math.min(this.pluginState.maxPixels, 20000)

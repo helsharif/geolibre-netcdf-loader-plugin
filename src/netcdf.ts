@@ -1,24 +1,36 @@
-import { NetCDFReader } from "netcdfjs";
-import * as hdf5 from "jsfive";
+import h5wasm from "h5wasm";
+import type { Dataset, Entity, Group, OutputData } from "h5wasm";
 import type { FeatureCollection } from "./types/geolibre";
 
-type NetCDFVariable = NetCDFReader["variables"][number];
-
 export interface NetCDFSummary {
-  format: "netcdf3" | "netcdf4";
-  dimensions: NetCDFReader["dimensions"];
+  format: "netcdf4";
+  handle: H5FileHandle;
+  dimensions: DimensionSummary[];
   variables: VariableSummary[];
   latVariable?: VariableSummary;
   lonVariable?: VariableSummary;
   dataVariables: VariableSummary[];
-  readVariable: (name: string) => Array<string | number | number[]>;
+}
+
+export interface H5FileHandle {
+  filename: string;
+  file: InstanceType<typeof h5wasm.File>;
+}
+
+export interface DimensionSummary {
+  id: number;
+  name: string;
+  size: number;
 }
 
 export interface VariableSummary {
   name: string;
+  path: string;
   type: string;
-  dimensions: { id: number; name: string; size: number }[];
+  shape: number[];
+  dimensions: DimensionSummary[];
   attributes: Record<string, string | number>;
+  isCoordinateVariable: boolean;
 }
 
 export interface SliceSelection {
@@ -55,6 +67,26 @@ export interface RasterGridResult {
 
 const LAT_NAMES = new Set(["lat", "latitude", "y", "nav_lat"]);
 const LON_NAMES = new Set(["lon", "lng", "long", "longitude", "x", "nav_lon"]);
+const COORDINATE_NAMES = new Set([
+  "lat",
+  "latitude",
+  "lon",
+  "longitude",
+  "time",
+  "x",
+  "y",
+  "z",
+  "lev",
+  "level",
+  "depth",
+  "bnds",
+  "bounds",
+  "time_bnds",
+  "lat_bnds",
+  "lon_bnds",
+  "crs",
+  "spatial_ref"
+]);
 const MISSING_ATTRIBUTE_NAMES = [
   "_FillValue",
   "missing_value",
@@ -62,36 +94,78 @@ const MISSING_ATTRIBUTE_NAMES = [
   "missingValue"
 ];
 
-export function summarizeNetCDF(data: ArrayBuffer): NetCDFSummary {
-  if (isHdf5(data)) {
-    return summarizeNetCDF4(data);
+export function detectNetCDFSignature(data: ArrayBuffer): "hdf5" | "netcdf3" | "unknown" {
+  const bytes = new Uint8Array(data, 0, Math.min(8, data.byteLength));
+  if (
+    bytes.length >= 8 &&
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x48 &&
+    bytes[2] === 0x44 &&
+    bytes[3] === 0x46 &&
+    bytes[4] === 0x0d &&
+    bytes[5] === 0x0a &&
+    bytes[6] === 0x1a &&
+    bytes[7] === 0x0a
+  ) {
+    return "hdf5";
+  }
+  if (
+    bytes.length >= 4 &&
+    bytes[0] === 0x43 &&
+    bytes[1] === 0x44 &&
+    bytes[2] === 0x46 &&
+    [0x01, 0x02, 0x05].includes(bytes[3])
+  ) {
+    return "netcdf3";
+  }
+  return "unknown";
+}
+
+export async function summarizeNetCDF(data: ArrayBuffer): Promise<NetCDFSummary> {
+  const signature = detectNetCDFSignature(data);
+  if (signature === "netcdf3") {
+    throw new Error("This file is classic NetCDF3/CDF. Version 1 currently supports NetCDF4/HDF5 files only.");
+  }
+  if (signature !== "hdf5") {
+    throw new Error("This file is not recognized as NetCDF4/HDF5.");
   }
 
-  const reader = new NetCDFReader(data);
-  const dimensions = reader.dimensions;
-  const variables = reader.variables.map((variable) =>
-    summarizeVariable(variable, dimensions)
-  );
+  const handle = await openH5File(data);
+  const variables = discoverVariables(handle.file);
+  const dimensions = collectDimensions(variables);
   const latVariable = variables.find(isLatitudeVariable);
   const lonVariable = variables.find(isLongitudeVariable);
   const dataVariables = variables.filter((variable) =>
     isRenderableDataVariable(variable, latVariable, lonVariable)
   );
 
+  if (dataVariables.length === 0) {
+    throw new Error("No supported CF-style rectilinear raster variables were found.");
+  }
+
   return {
-    format: "netcdf3",
+    format: "netcdf4",
+    handle,
     dimensions,
     variables,
     latVariable,
     lonVariable,
-    dataVariables,
-    readVariable: (name) => reader.getDataVariable(name)
+    dataVariables
   };
+}
+
+export function closeNetCDF(summary: NetCDFSummary | undefined): void {
+  try {
+    summary?.handle.file.close();
+  } catch {
+    // Ignore close errors from already released HDF5 handles.
+  }
 }
 
 export function variableLabel(variable: VariableSummary): string {
   const dims = variable.dimensions.map((dimension) => dimension.name).join(", ");
-  return `${variable.name}${dims ? ` (${dims})` : ""}`;
+  const label = variable.attributes.long_name || variable.attributes.standard_name || variable.name;
+  return `${label}${dims ? ` (${dims})` : ""}`;
 }
 
 export function getDefaultFixedDimensions(variable: VariableSummary): Record<string, number> {
@@ -104,70 +178,31 @@ export function getDefaultFixedDimensions(variable: VariableSummary): Record<str
   return fixed;
 }
 
-export function toPointFeatureCollection(
+export async function toPointFeatureCollection(
   summary: NetCDFSummary,
   selection: SliceSelection
-): GeoJsonConversionResult {
-  const variable = summary.variables.find(
-    (candidate) => candidate.name === selection.variableName
-  );
-  if (!variable) {
-    throw new Error(`Variable not found: ${selection.variableName}`);
-  }
-  if (!summary.latVariable || !summary.lonVariable) {
-    throw new Error("Could not identify latitude and longitude coordinate variables.");
-  }
-
-  const latDimensionIndex = findDimensionPosition(variable, summary.latVariable);
-  const lonDimensionIndex = findDimensionPosition(variable, summary.lonVariable);
-  if (latDimensionIndex < 0 || lonDimensionIndex < 0) {
-    throw new Error("Selected variable does not use the detected latitude/longitude dimensions.");
-  }
-
-  const latValues = numericArray(summary.readVariable(summary.latVariable.name));
-  const lonValues = numericArray(summary.readVariable(summary.lonVariable.name));
-  const values = numericArray(summary.readVariable(variable.name));
-  const latCount = variable.dimensions[latDimensionIndex]?.size ?? 0;
-  const lonCount = variable.dimensions[lonDimensionIndex]?.size ?? 0;
+): Promise<GeoJsonConversionResult> {
+  const raster = await toRasterGrid(summary, {
+    variableName: selection.variableName,
+    fixedDimensions: selection.fixedDimensions,
+    maxPixels: selection.maxFeatures
+  });
   const targetMax = Math.max(1, selection.maxFeatures || 20000);
-  const sampledEvery = Math.max(1, Math.ceil(Math.sqrt((latCount * lonCount) / targetMax)));
-  const missingValues = getMissingValues(variable);
+  const sampledEvery = Math.max(1, Math.ceil(Math.sqrt(raster.validValueCount / targetMax)));
   const features: FeatureCollection["features"] = [];
-  let west = 180;
-  let south = 90;
-  let east = -180;
-  let north = -90;
   let validValueCount = 0;
 
-  for (let latIndex = 0; latIndex < latCount; latIndex += sampledEvery) {
-    for (let lonIndex = 0; lonIndex < lonCount; lonIndex += sampledEvery) {
-      const flatIndex = flatIndexFor(variable, {
-        latDimensionIndex,
-        lonDimensionIndex,
-        latIndex,
-        lonIndex,
-        fixedDimensions: selection.fixedDimensions
-      });
-      const value = values[flatIndex];
-      const lat = latValues[latIndex];
-      const lon = normalizeLongitude(lonValues[lonIndex]);
-
-      if (!Number.isFinite(lat) || !Number.isFinite(lon) || !isValidValue(value, missingValues)) {
+  for (let row = 0; row < raster.height; row += sampledEvery) {
+    for (let column = 0; column < raster.width; column += sampledEvery) {
+      const value = raster.values[row * raster.width + column];
+      if (!Number.isFinite(value)) {
         continue;
       }
-
-      west = Math.min(west, lon);
-      south = Math.min(south, lat);
-      east = Math.max(east, lon);
-      north = Math.max(north, lat);
       validValueCount += 1;
       features.push({
         type: "Feature",
-        geometry: { type: "Point", coordinates: [lon, lat] },
-        properties: {
-          value,
-          variable: variable.name
-        }
+        geometry: { type: "Point", coordinates: [raster.lonCenters[column], raster.latCenters[row]] },
+        properties: { value, variable: raster.variableName }
       });
     }
   }
@@ -178,22 +213,17 @@ export function toPointFeatureCollection(
 
   return {
     collection: { type: "FeatureCollection", features },
-    bounds: [west, south, east, north],
-    sampledEvery,
+    bounds: raster.bounds,
+    sampledEvery: raster.sampledEvery * sampledEvery,
     validValueCount
   };
 }
 
-export function toRasterGrid(
+export async function toRasterGrid(
   summary: NetCDFSummary,
   selection: RasterGridSelection
-): RasterGridResult {
-  const variable = summary.variables.find(
-    (candidate) => candidate.name === selection.variableName
-  );
-  if (!variable) {
-    throw new Error(`Variable not found: ${selection.variableName}`);
-  }
+): Promise<RasterGridResult> {
+  const variable = findVariable(summary, selection.variableName);
   if (!summary.latVariable || !summary.lonVariable) {
     throw new Error("Could not identify latitude and longitude coordinate variables.");
   }
@@ -204,9 +234,10 @@ export function toRasterGrid(
     throw new Error("Selected variable does not use the detected latitude/longitude dimensions.");
   }
 
-  const latValues = numericArray(summary.readVariable(summary.latVariable.name));
-  const lonValues = numericArray(summary.readVariable(summary.lonVariable.name)).map(normalizeLongitude);
-  const values = numericArray(summary.readVariable(variable.name));
+  const latValues = numericArray(readDataset(summary.handle.file, summary.latVariable.path).value);
+  const lonValues = numericArray(readDataset(summary.handle.file, summary.lonVariable.path).value).map(
+    normalizeLongitude
+  );
   const latCount = variable.dimensions[latDimensionIndex]?.size ?? 0;
   const lonCount = variable.dimensions[lonDimensionIndex]?.size ?? 0;
   const maxPixels = Math.max(1, selection.maxPixels || 1000000);
@@ -217,29 +248,30 @@ export function toRasterGrid(
   const lonCenters = new Array<number>(width);
   const latCenters = new Array<number>(height);
   rasterValues.fill(Number.NaN);
-  const missingValues = getMissingValues(variable);
+
+  const sourceDataset = readDataset(summary.handle.file, variable.path);
+  const sliceRanges = variable.dimensions.map((dimension, index) => {
+    if (index === latDimensionIndex || index === lonDimensionIndex) {
+      return [0, dimension.size, sampledEvery] as [number, number, number];
+    }
+    return [clampIndex(selection.fixedDimensions[dimension.name] ?? 0, dimension.size)] as [number];
+  });
+  const sliceValues = numericArray(sourceDataset.slice(sliceRanges));
   const latAscending = (latValues[0] ?? 0) <= (latValues[latCount - 1] ?? 0);
   let minValue = Number.POSITIVE_INFINITY;
   let maxValue = Number.NEGATIVE_INFINITY;
   let validValueCount = 0;
 
   for (let row = 0; row < height; row += 1) {
-    const sourceLatIndex = latAscending
-      ? latCount - 1 - row * sampledEvery
-      : row * sampledEvery;
+    const sourceLatIndex = latAscending ? latCount - 1 - row * sampledEvery : row * sampledEvery;
     latCenters[row] = latValues[sourceLatIndex];
     for (let column = 0; column < width; column += 1) {
       const sourceLonIndex = column * sampledEvery;
       lonCenters[column] = lonValues[sourceLonIndex];
-      const flatIndex = flatIndexFor(variable, {
-        latDimensionIndex,
-        lonDimensionIndex,
-        latIndex: sourceLatIndex,
-        lonIndex: sourceLonIndex,
-        fixedDimensions: selection.fixedDimensions
-      });
-      const value = values[flatIndex];
-      if (!isValidValue(value, missingValues)) {
+      const sourceRow = latAscending ? height - 1 - row : row;
+      const rawValue = sliceValues[sourceRow * width + column];
+      const value = decodeValue(rawValue, variable.attributes);
+      if (value === null) {
         continue;
       }
       const outputIndex = row * width + column;
@@ -268,6 +300,33 @@ export function toRasterGrid(
   };
 }
 
+export function decodeValue(raw: number, attrs: Record<string, unknown>): number | null {
+  for (const name of MISSING_ATTRIBUTE_NAMES) {
+    const missing = numericAttribute(attrs, name);
+    if (missing !== undefined && raw === missing) {
+      return null;
+    }
+  }
+
+  const scaleFactor = numericAttribute(attrs, "scale_factor") ?? 1;
+  const addOffset = numericAttribute(attrs, "add_offset") ?? 0;
+  const value = raw * scaleFactor + addOffset;
+  const validMin = numericAttribute(attrs, "valid_min");
+  const validMax = numericAttribute(attrs, "valid_max");
+  const validRange = arrayAttribute(attrs, "valid_range");
+
+  if (validMin !== undefined && value < validMin) {
+    return null;
+  }
+  if (validMax !== undefined && value > validMax) {
+    return null;
+  }
+  if (validRange && (value < validRange[0] || value > validRange[1])) {
+    return null;
+  }
+  return Number.isFinite(value) ? value : null;
+}
+
 export function flatIndexFor(
   variable: VariableSummary,
   options: {
@@ -291,117 +350,84 @@ export function flatIndexFor(
   return index;
 }
 
-function summarizeVariable(
-  variable: NetCDFVariable,
-  dimensions: NetCDFReader["dimensions"]
-): VariableSummary {
-  return {
-    name: variable.name,
-    type: variable.type,
-    dimensions: variable.dimensions.map((id) => ({
-      id,
-      name: dimensions[id]?.name ?? `dimension-${id}`,
-      size: dimensions[id]?.size ?? 0
-    })),
-    attributes: attributesToRecord((variable as unknown as { attributes?: unknown }).attributes)
-  };
+async function openH5File(data: ArrayBuffer): Promise<H5FileHandle> {
+  const module = await h5wasm.ready;
+  const filename = `/geolibre-netcdf-${Date.now()}-${Math.random().toString(36).slice(2)}.nc`;
+  module.FS.writeFile(filename, new Uint8Array(data));
+  return { filename, file: new h5wasm.File(filename, "r") };
 }
 
-function summarizeNetCDF4(data: ArrayBuffer): NetCDFSummary {
-  const file = new hdf5.File(data, "dataset.nc");
-  const datasets = listRootDatasets(file);
-  const dimensionIds = new Map<string, number>();
-  const dimensions: NetCDFReader["dimensions"] = [];
+function discoverVariables(file: InstanceType<typeof h5wasm.File>): VariableSummary[] {
+  const variables: VariableSummary[] = [];
+  walkGroup(file, "", variables);
+  return variables;
+}
 
-  const getDimension = (name: string, size: number) => {
-    const cleanName = cleanAttributeString(name);
-    const existing = dimensionIds.get(cleanName);
-    if (existing !== undefined) {
-      return { id: existing, name: cleanName, size: dimensions[existing]?.size ?? size };
+function walkGroup(group: Group, groupPath: string, variables: VariableSummary[]): void {
+  for (const key of group.keys()) {
+    const path = `${groupPath}/${key}`.replace(/\/+/g, "/");
+    const entity = group.get(key);
+    if (isDataset(entity)) {
+      const shape = entity.shape ?? [];
+      const dimensions = resolveDimensions(entity, key, shape);
+      const attributes = attributesToRecord(entity);
+      variables.push({
+        name: key,
+        path,
+        type: String(entity.dtype),
+        shape,
+        dimensions,
+        attributes,
+        isCoordinateVariable: isCoordinateVariableName(key) || shape.length <= 1
+      });
+    } else if (isGroup(entity)) {
+      walkGroup(entity, path, variables);
     }
-    const id = dimensions.length;
-    dimensionIds.set(cleanName, id);
-    dimensions.push({ name: cleanName, size });
-    return { id, name: cleanName, size };
-  };
+  }
+}
 
-  const variables = datasets.map(({ name, dataset }) => {
-    const attrs = attributesToRecord(dataset.attrs);
-    const shape = getDatasetShape(dataset);
-    const coordinateNames = getCoordinateNames(attrs);
-    const dimensionNames =
-      coordinateNames.length === shape.length
-        ? coordinateNames
-        : shape.length === 1
-          ? [name]
-          : shape.map((_size, index) => `dimension-${index}`);
-
-    return {
-      name,
-      type: String(dataset.dtype ?? "unknown"),
-      dimensions: shape.map((size, index) => getDimension(dimensionNames[index] ?? `dimension-${index}`, size)),
-      attributes: attrs
-    };
+function resolveDimensions(dataset: Dataset, name: string, shape: number[]): DimensionSummary[] {
+  const labels = dataset.get_dimension_labels();
+  return shape.map((size, index) => {
+    const scalePaths = dataset.get_attached_scales(index);
+    const scaleName = scalePaths[0]?.split("/").filter(Boolean).pop();
+    const label = labels[index] ?? scaleName ?? (shape.length === 1 ? name : `dimension-${index}`);
+    return { id: index, name: label, size };
   });
-
-  const latVariable = variables.find(isLatitudeVariable);
-  const lonVariable = variables.find(isLongitudeVariable);
-  const dataVariables = variables.filter((variable) =>
-    isRenderableDataVariable(variable, latVariable, lonVariable)
-  );
-
-  return {
-    format: "netcdf4",
-    dimensions,
-    variables,
-    latVariable,
-    lonVariable,
-    dataVariables,
-    readVariable: (name) => {
-      const dataset = file.get(name) as Hdf5Dataset;
-      return Array.from(dataset.value ?? []) as Array<string | number | number[]>;
-    }
-  };
 }
 
-function attributesToRecord(attributes: unknown): Record<string, string | number> {
+function collectDimensions(variables: VariableSummary[]): DimensionSummary[] {
+  const dimensions = new Map<string, DimensionSummary>();
+  for (const variable of variables) {
+    for (const dimension of variable.dimensions) {
+      if (!dimensions.has(dimension.name)) {
+        dimensions.set(dimension.name, { ...dimension, id: dimensions.size });
+      }
+    }
+  }
+  return [...dimensions.values()];
+}
+
+function attributesToRecord(entity: Dataset): Record<string, string | number> {
   const record: Record<string, string | number> = {};
-  if (Array.isArray(attributes)) {
-    for (const attribute of attributes) {
-      if (
-        attribute &&
-        typeof attribute === "object" &&
-        "name" in attribute &&
-        "value" in attribute
-      ) {
-        const name = String((attribute as { name: unknown }).name);
-        const value = normalizeAttributeValue((attribute as { value: unknown }).value);
-        if (typeof value === "string" || typeof value === "number") {
-          record[name] = value;
-        }
-      }
-    }
-    return record;
-  }
-
-  if (attributes && typeof attributes === "object") {
-    for (const [name, rawValue] of Object.entries(attributes)) {
-      const value = normalizeAttributeValue(rawValue);
-      if (typeof value === "string" || typeof value === "number") {
-        record[name] = value;
-      }
+  for (const [name, attribute] of Object.entries(entity.attrs)) {
+    const value = normalizeAttributeValue(attribute.value);
+    if (typeof value === "string" || typeof value === "number") {
+      record[name] = value;
     }
   }
-
   return record;
 }
 
 function normalizeAttributeValue(value: unknown): string | number | undefined {
+  if (ArrayBuffer.isView(value) && "length" in value && value.length === 1) {
+    return normalizeAttributeValue((value as unknown as ArrayLike<unknown>)[0]);
+  }
   if (Array.isArray(value) && value.length === 1) {
     return normalizeAttributeValue(value[0]);
   }
   if (typeof value === "string") {
-    return cleanAttributeString(value);
+    return value.replace(/\0/g, "").trim();
   }
   if (typeof value === "number") {
     return value;
@@ -409,57 +435,22 @@ function normalizeAttributeValue(value: unknown): string | number | undefined {
   return undefined;
 }
 
-function listRootDatasets(file: Hdf5File): Array<{ name: string; dataset: Hdf5Dataset }> {
-  const datasets: Array<{ name: string; dataset: Hdf5Dataset }> = [];
-  for (const name of file.keys ?? []) {
-    const dataset = file.get(name) as Hdf5Dataset;
-    if (Array.isArray(dataset.shape)) {
-      datasets.push({ name, dataset });
-    }
+function readDataset(file: InstanceType<typeof h5wasm.File>, path: string): Dataset {
+  const entity = file.get(path);
+  if (!isDataset(entity)) {
+    throw new Error(`Dataset not found: ${path}`);
   }
-  return datasets;
+  return entity;
 }
 
-function getDatasetShape(dataset: Hdf5Dataset): number[] {
-  return Array.isArray(dataset.shape) ? dataset.shape.map(Number) : [];
-}
-
-function getCoordinateNames(attributes: Record<string, string | number>): string[] {
-  const coordinates = attributes.coordinates;
-  return typeof coordinates === "string"
-    ? coordinates.split(/\s+/).filter(Boolean).map(cleanAttributeString)
-    : [];
-}
-
-function cleanAttributeString(value: string): string {
-  return value.replace(/\0/g, "").trim();
-}
-
-function isHdf5(data: ArrayBuffer): boolean {
-  const signature = new Uint8Array(data, 0, Math.min(8, data.byteLength));
-  return (
-    signature.length >= 8 &&
-    signature[0] === 0x89 &&
-    signature[1] === 0x48 &&
-    signature[2] === 0x44 &&
-    signature[3] === 0x46 &&
-    signature[4] === 0x0d &&
-    signature[5] === 0x0a &&
-    signature[6] === 0x1a &&
-    signature[7] === 0x0a
+function findVariable(summary: NetCDFSummary, nameOrPath: string): VariableSummary {
+  const variable = summary.variables.find(
+    (candidate) => candidate.name === nameOrPath || candidate.path === nameOrPath
   );
-}
-
-interface Hdf5File {
-  keys?: string[];
-  get: (path: string) => unknown;
-}
-
-interface Hdf5Dataset {
-  shape?: number[];
-  dtype?: string;
-  attrs?: unknown;
-  value?: ArrayLike<string | number | number[]>;
+  if (!variable) {
+    throw new Error(`Variable not found: ${nameOrPath}`);
+  }
+  return variable;
 }
 
 function isRenderableDataVariable(
@@ -467,37 +458,36 @@ function isRenderableDataVariable(
   latVariable?: VariableSummary,
   lonVariable?: VariableSummary
 ): boolean {
-  if (!latVariable || !lonVariable) {
+  if (!latVariable || !lonVariable || variable.isCoordinateVariable) {
     return false;
   }
   if (variable.name === latVariable.name || variable.name === lonVariable.name) {
     return false;
   }
-  if (variable.type === "char" || variable.type === "byte") {
+  if (!isNumericDtype(variable.type) || variable.dimensions.length < 2) {
     return false;
   }
   return findDimensionPosition(variable, latVariable) >= 0 && findDimensionPosition(variable, lonVariable) >= 0;
 }
 
-function findDimensionPosition(
-  variable: VariableSummary,
-  coordinateVariable: VariableSummary
-): number {
+function findDimensionPosition(variable: VariableSummary, coordinateVariable: VariableSummary): number {
   const coordinateDimension = coordinateVariable.dimensions[0];
   if (!coordinateDimension) {
     return -1;
   }
-  return variable.dimensions.findIndex((dimension) => dimension.id === coordinateDimension.id);
+  return variable.dimensions.findIndex((dimension) => dimension.name === coordinateDimension.name);
 }
 
 function isLatitudeVariable(variable: VariableSummary): boolean {
   const units = String(variable.attributes.units ?? "").toLowerCase();
-  return isLatLike(variable.name) || units.includes("degrees_north");
+  const standardName = String(variable.attributes.standard_name ?? "").toLowerCase();
+  return isLatLike(variable.name) || standardName === "latitude" || units.includes("degrees_north");
 }
 
 function isLongitudeVariable(variable: VariableSummary): boolean {
   const units = String(variable.attributes.units ?? "").toLowerCase();
-  return isLonLike(variable.name) || units.includes("degrees_east");
+  const standardName = String(variable.attributes.standard_name ?? "").toLowerCase();
+  return isLonLike(variable.name) || standardName === "longitude" || units.includes("degrees_east");
 }
 
 function isLatLike(name: string): boolean {
@@ -508,23 +498,34 @@ function isLonLike(name: string): boolean {
   return LON_NAMES.has(name.toLowerCase());
 }
 
-function numericArray(values: ReturnType<NetCDFReader["getDataVariable"]>): number[] {
-  return values.map((value) => (typeof value === "number" ? value : Number.NaN));
+function isCoordinateVariableName(name: string): boolean {
+  return COORDINATE_NAMES.has(name.toLowerCase());
 }
 
-function getMissingValues(variable: VariableSummary): Set<number> {
-  const missing = new Set<number>();
-  for (const name of MISSING_ATTRIBUTE_NAMES) {
-    const value = variable.attributes[name];
-    if (typeof value === "number") {
-      missing.add(value);
-    }
+function isNumericDtype(dtype: string): boolean {
+  return /[ifud]/i.test(dtype);
+}
+
+function numericArray(values: OutputData | null): number[] {
+  if (!values || typeof values === "string" || typeof values === "number" || typeof values === "bigint" || typeof values === "boolean") {
+    return [];
   }
-  return missing;
+  return Array.from(values as ArrayLike<unknown>, (value) =>
+    typeof value === "number" ? value : Number.NaN
+  );
 }
 
-function isValidValue(value: number, missingValues: Set<number>): boolean {
-  return Number.isFinite(value) && !missingValues.has(value);
+function numericAttribute(attrs: Record<string, unknown>, name: string): number | undefined {
+  const value = attrs[name];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function arrayAttribute(attrs: Record<string, unknown>, name: string): [number, number] | undefined {
+  const value = attrs[name];
+  if (Array.isArray(value) && value.length >= 2 && typeof value[0] === "number" && typeof value[1] === "number") {
+    return [value[0], value[1]];
+  }
+  return undefined;
 }
 
 function normalizeLongitude(value: number): number {
@@ -570,4 +571,12 @@ function coordinatePadding(values: number[]): number {
     }
   }
   return Number.isFinite(smallestStep) ? smallestStep / 2 : 0;
+}
+
+function isDataset(entity: Entity | null): entity is Dataset {
+  return entity instanceof h5wasm.Dataset;
+}
+
+function isGroup(entity: Entity | null): entity is Group {
+  return entity instanceof h5wasm.Group;
 }

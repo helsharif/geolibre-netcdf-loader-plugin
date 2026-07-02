@@ -1,29 +1,42 @@
 import { describe, expect, it } from "vitest";
-import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { fromArrayBuffer } from "geotiff";
+import h5wasm from "h5wasm/node";
 import {
+  closeNetCDF,
+  decodeValue,
+  detectNetCDFSignature,
   flatIndexFor,
   getDefaultFixedDimensions,
   summarizeNetCDF,
-  toPointFeatureCollection,
   toRasterGrid
 } from "../src/netcdf";
 import { rasterGridToGeoTiffBlob } from "../src/geotiff";
-import type { VariableSummary } from "../src/netcdf";
+import type { RasterGridResult, VariableSummary } from "../src/netcdf";
 
 const variable: VariableSummary = {
   name: "temperature",
-  type: "float",
+  path: "/temperature",
+  type: "<f",
+  shape: [3, 4, 5],
   dimensions: [
     { id: 0, name: "time", size: 3 },
     { id: 1, name: "lat", size: 4 },
     { id: 2, name: "lon", size: 5 }
   ],
-  attributes: {}
+  attributes: {},
+  isCoordinateVariable: false
 };
 
 describe("NetCDF grid helpers", () => {
+  it("detects supported and unsupported file signatures", () => {
+    expect(detectNetCDFSignature(new Uint8Array([0x89, 0x48, 0x44, 0x46, 0x0d, 0x0a, 0x1a, 0x0a]).buffer)).toBe("hdf5");
+    expect(detectNetCDFSignature(new Uint8Array([0x43, 0x44, 0x46, 0x01]).buffer)).toBe("netcdf3");
+    expect(detectNetCDFSignature(new Uint8Array([1, 2, 3, 4]).buffer)).toBe("unknown");
+  });
+
   it("creates fixed dimensions for non-spatial axes", () => {
     expect(getDefaultFixedDimensions(variable)).toEqual({ time: 0 });
   });
@@ -39,59 +52,56 @@ describe("NetCDF grid helpers", () => {
       })
     ).toBe(33);
   });
+
+  it("decodes scale, offset, fill, and valid range metadata", () => {
+    const attrs = { _FillValue: -9999, scale_factor: 0.1, add_offset: 2, valid_range: [0, 100] };
+    expect(decodeValue(30, attrs)).toBe(5);
+    expect(decodeValue(-9999, attrs)).toBeNull();
+    expect(decodeValue(2000, attrs)).toBeNull();
+  });
 });
 
-describe("NetCDF4/HDF5 files", () => {
-  const samplePath = resolve("example_netcdf_files/JVBC_HistAnalog_tavg.nc");
+describe("h5wasm NetCDF4/HDF5 files", () => {
+  it("discovers coordinate variables and extracts a selected 2D slice", async () => {
+    const fileBuffer = await createFixtureFile();
+    const summary = await summarizeNetCDF(fileBuffer);
 
-  it.skipIf(!existsSync(samplePath))("loads the JVBC historical analog sample", () => {
-    const buffer = readFileSync(samplePath);
-    const arrayBuffer = buffer.buffer.slice(
-      buffer.byteOffset,
-      buffer.byteOffset + buffer.byteLength
-    );
-    const summary = summarizeNetCDF(arrayBuffer);
+    try {
+      expect(summary.format).toBe("netcdf4");
+      expect(summary.latVariable?.name).toBe("lat");
+      expect(summary.lonVariable?.name).toBe("lon");
+      expect(summary.dataVariables.map((candidate) => candidate.name)).toContain("tavg");
 
-    expect(summary.format).toBe("netcdf4");
-    expect(summary.latVariable?.name).toBe("lat");
-    expect(summary.lonVariable?.name).toBe("lon");
-    expect(summary.dataVariables.map((variable) => variable.name)).toContain("tavg");
+      const raster = await toRasterGrid(summary, {
+        variableName: "tavg",
+        fixedDimensions: { time: 1 },
+        maxPixels: 1000000
+      });
+      expect(raster.width).toBe(3);
+      expect(raster.height).toBe(2);
+      expect(raster.validValueCount).toBe(6);
+      expect(raster.valueRange).toEqual([16, 21]);
+      expect(raster.bounds).toEqual([-5.5, 33.5, -2.5, 35.5]);
+    } finally {
+      closeNetCDF(summary);
+    }
+  });
+});
 
-    const result = toPointFeatureCollection(summary, {
-      variableName: "tavg",
-      fixedDimensions: { time: 0 },
-      maxFeatures: 100
-    });
-    expect(result.collection.features.length).toBeGreaterThan(0);
-    expect(result.bounds[0]).toBeLessThan(result.bounds[2]);
-    expect(result.bounds[1]).toBeLessThan(result.bounds[3]);
-
-    const raster = toRasterGrid(summary, {
-      variableName: "tavg",
-      fixedDimensions: { time: 0 },
-      maxPixels: 1000000
-    });
-    expect(raster.width).toBe(30);
-    expect(raster.height).toBe(20);
-    expect(raster.validValueCount).toBeGreaterThan(0);
-    expect(raster.validValueCount).toBeLessThanOrEqual(600);
-    expect(raster.valueRange[0]).toBeLessThan(raster.valueRange[1]);
-    expect(raster.bounds[0]).toBeLessThan(raster.bounds[2]);
-    expect(raster.bounds[1]).toBeLessThan(raster.bounds[3]);
-  }, 15000);
-
-  it.skipIf(!existsSync(samplePath))("writes a georeferenced GeoTIFF raster", async () => {
-    const buffer = readFileSync(samplePath);
-    const arrayBuffer = buffer.buffer.slice(
-      buffer.byteOffset,
-      buffer.byteOffset + buffer.byteLength
-    );
-    const summary = summarizeNetCDF(arrayBuffer);
-    const raster = toRasterGrid(summary, {
-      variableName: "tavg",
-      fixedDimensions: { time: 0 },
-      maxPixels: 1000000
-    });
+describe("GeoTIFF output", () => {
+  it("writes a georeferenced GeoTIFF raster", async () => {
+    const raster: RasterGridResult = {
+      variableName: "temperature",
+      width: 3,
+      height: 2,
+      values: new Float32Array([1, 2, 3, 4, Number.NaN, 6]),
+      lonCenters: [-5, -4, -3],
+      latCenters: [36, 35],
+      bounds: [-5.5, 34.5, -2.5, 36.5],
+      valueRange: [1, 6],
+      validValueCount: 5,
+      sampledEvery: 1
+    };
     const blob = rasterGridToGeoTiffBlob(raster);
     const tiff = await fromArrayBuffer(await blob.arrayBuffer());
     const image = await tiff.getImage();
@@ -101,5 +111,44 @@ describe("NetCDF4/HDF5 files", () => {
     expect(image.getBoundingBox()).toEqual(raster.bounds);
     const geoKeys = image.getGeoKeys();
     expect(geoKeys?.GeographicTypeGeoKey).toBe(4326);
-  }, 15000);
+  });
 });
+
+async function createFixtureFile(): Promise<ArrayBuffer> {
+  await h5wasm.ready;
+  const dir = mkdtempSync(join(tmpdir(), "geolibre-netcdf-"));
+  const filePath = join(dir, "fixture.nc");
+  try {
+    const file = new h5wasm.File(filePath, "w");
+    const time = file.create_dataset({ name: "time", data: new Float64Array([0, 1]), shape: [2] });
+    const lat = file.create_dataset({ name: "lat", data: new Float64Array([34, 35]), shape: [2] });
+    const lon = file.create_dataset({ name: "lon", data: new Float64Array([-5, -4, -3]), shape: [3] });
+    time.make_scale("time");
+    lat.make_scale("lat");
+    lon.make_scale("lon");
+    lat.create_attribute("units", "degrees_north");
+    lon.create_attribute("units", "degrees_east");
+    const data = file.create_dataset({
+      name: "tavg",
+      data: new Float32Array([
+        10, 11, 12,
+        13, 14, 15,
+        16, 17, 18,
+        19, 20, 21
+      ]),
+      shape: [2, 2, 3]
+    });
+    data.attach_scale(0, "time");
+    data.attach_scale(1, "lat");
+    data.attach_scale(2, "lon");
+    data.create_attribute("long_name", "Mean air temperature");
+    data.create_attribute("units", "degree_Celsius");
+    file.flush();
+    file.close();
+
+    const buffer = readFileSync(filePath);
+    return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
