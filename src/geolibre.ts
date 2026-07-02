@@ -110,7 +110,7 @@ interface GeneratedRasterOverlay {
 export const plugin: GeoLibrePlugin = {
   id: PLUGIN_ID,
   name: "NetCDF Loader",
-  version: "0.4.3",
+  version: "0.4.4",
   urlParameterNames: [NETCDF_URL_PARAM],
   activate(app) {
     unregisterPanel = app.registerRightPanel?.({
@@ -511,15 +511,7 @@ class NetCDFPanel {
       return this.addMapLibreRasterOverlay(layerName, raster);
     }
 
-    try {
-      return await this.addNativeRasterLayer(layerName, raster);
-    } catch (error) {
-      if (this.app.getMap?.()) {
-        this.setStatus(`GeoLibre layer failed: ${errorMessage(error)} Trying direct raster overlay.`, "busy");
-        return this.addMapLibreRasterOverlay(layerName, raster);
-      }
-      throw error;
-    }
+    return this.addNativeRasterLayer(layerName, raster);
   }
 
   private async addNativeRasterLayer(

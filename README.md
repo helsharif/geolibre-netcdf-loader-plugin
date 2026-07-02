@@ -20,7 +20,7 @@ Developed by **Husayn El Sharif**.
   - Turbo
   - Blue-red
   - Grayscale
-- Use direct MapLibre overlays as a rendering fallback when GeoLibre's native raster path does not draw local in-memory rasters.
+- Use direct MapLibre overlays as an explicit alternate rendering mode when GeoLibre's native raster path does not draw local in-memory rasters.
 
 ## Rendering Approach
 
@@ -38,7 +38,7 @@ Download or build the plugin zip, then install it in GeoLibre Desktop:
 4. Select the generated zip:
 
 ```text
-geolibre-plugin/geolibre-netcdf-0.4.3.zip
+geolibre-plugin/geolibre-netcdf-0.4.4.zip
 ```
 
 You can also add the unpacked development directory:
@@ -57,7 +57,7 @@ geolibre-plugin
 6. Choose a colormap, opacity, and layer mode.
 7. Click **Add raster layer**.
 
-Use **GeoLibre layer (left panel)** when you want the layer in GeoLibre's Layers panel. Use **Direct raster overlay** if GeoLibre registers the layer but does not draw it.
+Use **GeoLibre layer (left panel)** when you want the layer in GeoLibre's Layers panel. This mode reports an error if GeoLibre cannot create the registered raster layer. Use **Direct raster overlay** if GeoLibre registers the layer but does not draw it.
 
 ## Build From Source
 
@@ -69,7 +69,7 @@ npm run package:geolibre
 The packaged GeoLibre plugin archive is written to:
 
 ```text
-geolibre-plugin/geolibre-netcdf-0.4.3.zip
+geolibre-plugin/geolibre-netcdf-0.4.4.zip
 ```
 
 ## Development
