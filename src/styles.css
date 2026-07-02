@@ -1,11 +1,24 @@
 .geolibre-netcdf {
+  --geolibre-netcdf-accent: #146c94;
+  --geolibre-netcdf-accent-strong: #0f5f85;
+  --geolibre-netcdf-border: #d8dde6;
+  --geolibre-netcdf-control-border: #b9c2d0;
+  --geolibre-netcdf-control-bg: #fff;
+  --geolibre-netcdf-control-text: #18212f;
+  --geolibre-netcdf-muted: #596579;
+  --geolibre-netcdf-status-bg: #f4f6f8;
+  --geolibre-netcdf-status-text: #253246;
+  --geolibre-netcdf-surface: #fff;
+  --geolibre-netcdf-surface-soft: #f8fafc;
+  --geolibre-netcdf-text: #18212f;
+
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
   gap: 14px;
   height: 100%;
   padding: 14px;
-  color: #18212f;
+  color: var(--geolibre-netcdf-text);
   font: 13px/1.4 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
@@ -23,7 +36,7 @@
 }
 
 .geolibre-netcdf__dataset {
-  border-top: 1px solid #d8dde6;
+  border-top: 1px solid var(--geolibre-netcdf-border);
   padding-top: 12px;
 }
 
@@ -35,7 +48,7 @@
 
 .geolibre-netcdf__muted {
   margin: 0;
-  color: #596579;
+  color: var(--geolibre-netcdf-muted);
 }
 
 .geolibre-netcdf__label {
@@ -55,10 +68,10 @@
 .geolibre-netcdf select,
 .geolibre-netcdf button {
   min-height: 32px;
-  border: 1px solid #b9c2d0;
+  border: 1px solid var(--geolibre-netcdf-control-border);
   border-radius: 6px;
-  background: #fff;
-  color: #18212f;
+  background: var(--geolibre-netcdf-control-bg);
+  color: var(--geolibre-netcdf-control-text);
   font: inherit;
 }
 
@@ -71,8 +84,8 @@
 .geolibre-netcdf button {
   cursor: pointer;
   padding: 5px 12px;
-  background: #146c94;
-  border-color: #146c94;
+  background: var(--geolibre-netcdf-accent);
+  border-color: var(--geolibre-netcdf-accent);
   color: #fff;
   font-weight: 650;
 }
@@ -94,9 +107,9 @@
   gap: 8px;
   grid-column: 1 / -1;
   padding: 10px;
-  border: 1px solid #d8dde6;
+  border: 1px solid var(--geolibre-netcdf-border);
   border-radius: 6px;
-  background: #f8fafc;
+  background: var(--geolibre-netcdf-surface-soft);
 }
 
 .geolibre-netcdf__time-heading {
@@ -108,7 +121,7 @@
 }
 
 .geolibre-netcdf__time-heading strong {
-  color: #146c94;
+  color: var(--geolibre-netcdf-accent-strong);
   font-size: 12px;
   text-align: right;
 }
@@ -129,7 +142,7 @@
 .geolibre-netcdf__ramp {
   width: 100%;
   height: 18px;
-  border: 1px solid #b9c2d0;
+  border: 1px solid var(--geolibre-netcdf-control-border);
   border-radius: 4px;
 }
 
@@ -143,7 +156,7 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
-  border-top: 1px solid #d8dde6;
+  border-top: 1px solid var(--geolibre-netcdf-border);
   padding-top: 10px;
 }
 
@@ -162,7 +175,7 @@
 
 .geolibre-netcdf__overlay-row span {
   overflow: hidden;
-  color: #596579;
+  color: var(--geolibre-netcdf-muted);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -170,23 +183,23 @@
 .geolibre-netcdf__overlay-row button {
   min-height: 28px;
   padding: 4px 9px;
-  background: #fff;
-  border-color: #b9c2d0;
-  color: #18212f;
+  background: var(--geolibre-netcdf-control-bg);
+  border-color: var(--geolibre-netcdf-control-border);
+  color: var(--geolibre-netcdf-control-text);
 }
 
 .geolibre-netcdf__legend-labels {
   display: flex;
   justify-content: space-between;
-  color: #596579;
+  color: var(--geolibre-netcdf-muted);
   font-size: 12px;
 }
 
 .geolibre-netcdf__status {
   border-left: 3px solid #8793a4;
   padding: 8px 10px;
-  background: #f4f6f8;
-  color: #253246;
+  background: var(--geolibre-netcdf-status-bg);
+  color: var(--geolibre-netcdf-status-text);
 }
 
 .geolibre-netcdf__status--busy {
@@ -199,7 +212,7 @@
 
 .geolibre-netcdf__status--error {
   border-color: #b42318;
-  background: #fff1f0;
+  background: var(--geolibre-netcdf-error-bg, #fff1f0);
 }
 
 .geolibre-netcdf-control button {
@@ -214,6 +227,13 @@
 }
 
 .geolibre-netcdf-floating {
+  --geolibre-netcdf-border: #d8dde6;
+  --geolibre-netcdf-control-border: #b9c2d0;
+  --geolibre-netcdf-control-bg: #fff;
+  --geolibre-netcdf-control-text: #18212f;
+  --geolibre-netcdf-surface: #fff;
+  --geolibre-netcdf-text: #18212f;
+
   position: fixed;
   top: 92px;
   right: 24px;
@@ -222,9 +242,9 @@
   flex-direction: column;
   width: min(390px, calc(100vw - 32px));
   max-height: calc(100vh - 120px);
-  border: 1px solid #b9c2d0;
+  border: 1px solid var(--geolibre-netcdf-control-border);
   border-radius: 8px;
-  background: #fff;
+  background: var(--geolibre-netcdf-surface);
   box-shadow: 0 16px 40px rgb(15 23 42 / 22%);
   overflow: hidden;
 }
@@ -236,17 +256,17 @@
   gap: 12px;
   min-height: 40px;
   padding: 8px 10px 8px 14px;
-  border-bottom: 1px solid #d8dde6;
+  border-bottom: 1px solid var(--geolibre-netcdf-border);
   font: 650 14px/1.2 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  color: #18212f;
+  color: var(--geolibre-netcdf-text);
 }
 
 .geolibre-netcdf-floating__header button {
   min-height: 28px;
-  border: 1px solid #b9c2d0;
+  border: 1px solid var(--geolibre-netcdf-control-border);
   border-radius: 6px;
-  background: #fff;
-  color: #18212f;
+  background: var(--geolibre-netcdf-control-bg);
+  color: var(--geolibre-netcdf-control-text);
   font: inherit;
   cursor: pointer;
 }
@@ -256,16 +276,22 @@
 }
 
 .geolibre-netcdf-identify {
+  --geolibre-netcdf-identify-border: #cbd5e1;
+  --geolibre-netcdf-identify-muted: #64748b;
+  --geolibre-netcdf-identify-row-border: #e2e8f0;
+  --geolibre-netcdf-identify-surface: #fff;
+  --geolibre-netcdf-identify-text: #111827;
+
   position: absolute;
   z-index: 5;
   min-width: 240px;
   max-width: 360px;
   transform: translate(10px, -10px);
-  border: 1px solid #cbd5e1;
+  border: 1px solid var(--geolibre-netcdf-identify-border);
   border-radius: 6px;
-  background: #fff;
+  background: var(--geolibre-netcdf-identify-surface);
   box-shadow: 0 18px 42px rgb(15 23 42 / 22%);
-  color: #111827;
+  color: var(--geolibre-netcdf-identify-text);
   font: 12px/1.4 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   padding: 10px 12px;
   pointer-events: auto;
@@ -284,10 +310,10 @@
   width: 22px;
   min-height: 22px;
   padding: 0;
-  border: 1px solid #cbd5e1;
+  border: 1px solid var(--geolibre-netcdf-identify-border);
   border-radius: 4px;
-  background: #fff;
-  color: #334155;
+  background: var(--geolibre-netcdf-control-bg, #fff);
+  color: var(--geolibre-netcdf-control-text, #334155);
   font-weight: 700;
 }
 
@@ -295,15 +321,63 @@
   display: grid;
   grid-template-columns: minmax(104px, auto) minmax(0, 1fr);
   gap: 12px;
-  border-top: 1px solid #e2e8f0;
+  border-top: 1px solid var(--geolibre-netcdf-identify-row-border);
   padding: 5px 0;
 }
 
 .geolibre-netcdf-identify__row span {
-  color: #64748b;
+  color: var(--geolibre-netcdf-identify-muted);
 }
 
 .geolibre-netcdf-identify__row strong {
   overflow-wrap: anywhere;
   font-weight: 650;
+}
+
+:where(html.dark, body.dark, [data-theme="dark"], [data-color-mode="dark"], [data-bs-theme="dark"]) .geolibre-netcdf,
+:where(html.dark, body.dark, [data-theme="dark"], [data-color-mode="dark"], [data-bs-theme="dark"]) .geolibre-netcdf-floating,
+:where(html.dark, body.dark, [data-theme="dark"], [data-color-mode="dark"], [data-bs-theme="dark"]) .geolibre-netcdf-identify {
+  --geolibre-netcdf-accent: #1f8ab7;
+  --geolibre-netcdf-accent-strong: #7dd3fc;
+  --geolibre-netcdf-border: #334155;
+  --geolibre-netcdf-control-border: #5b6b80;
+  --geolibre-netcdf-control-bg: #f8fafc;
+  --geolibre-netcdf-control-text: #111827;
+  --geolibre-netcdf-error-bg: #451a1a;
+  --geolibre-netcdf-identify-border: #475569;
+  --geolibre-netcdf-identify-muted: #bac6d5;
+  --geolibre-netcdf-identify-row-border: #334155;
+  --geolibre-netcdf-identify-surface: #111827;
+  --geolibre-netcdf-identify-text: #f8fafc;
+  --geolibre-netcdf-muted: #bac6d5;
+  --geolibre-netcdf-status-bg: #111827;
+  --geolibre-netcdf-status-text: #f8fafc;
+  --geolibre-netcdf-surface: #020617;
+  --geolibre-netcdf-surface-soft: #111827;
+  --geolibre-netcdf-text: #f8fafc;
+}
+
+@media (prefers-color-scheme: dark) {
+  .geolibre-netcdf,
+  .geolibre-netcdf-floating,
+  .geolibre-netcdf-identify {
+    --geolibre-netcdf-accent: #1f8ab7;
+    --geolibre-netcdf-accent-strong: #7dd3fc;
+    --geolibre-netcdf-border: #334155;
+    --geolibre-netcdf-control-border: #5b6b80;
+    --geolibre-netcdf-control-bg: #f8fafc;
+    --geolibre-netcdf-control-text: #111827;
+    --geolibre-netcdf-error-bg: #451a1a;
+    --geolibre-netcdf-identify-border: #475569;
+    --geolibre-netcdf-identify-muted: #bac6d5;
+    --geolibre-netcdf-identify-row-border: #334155;
+    --geolibre-netcdf-identify-surface: #111827;
+    --geolibre-netcdf-identify-text: #f8fafc;
+    --geolibre-netcdf-muted: #bac6d5;
+    --geolibre-netcdf-status-bg: #111827;
+    --geolibre-netcdf-status-text: #f8fafc;
+    --geolibre-netcdf-surface: #020617;
+    --geolibre-netcdf-surface-soft: #111827;
+    --geolibre-netcdf-text: #f8fafc;
+  }
 }
