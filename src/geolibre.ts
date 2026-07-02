@@ -18,6 +18,7 @@ const PLUGIN_ID = "geolibre-netcdf";
 const PANEL_ID = "geolibre-netcdf-panel";
 const MENU_ID = "geolibre-netcdf-menu";
 const NETCDF_URL_PARAM = "netcdfUrl";
+const LARGE_REMOTE_FILE_BYTES = 100 * 1024 * 1024;
 
 interface PluginState {
   sourceLabel?: string;
@@ -124,7 +125,7 @@ interface GeoLibreMapMouseEvent {
 export const plugin: GeoLibrePlugin = {
   id: PLUGIN_ID,
   name: "NetCDF Loader",
-  version: "0.5.5",
+  version: "0.5.6",
   urlParameterNames: [NETCDF_URL_PARAM],
   activate(app) {
     unregisterPanel = app.registerRightPanel?.({
@@ -263,9 +264,15 @@ class NetCDFPanel {
     this.setStatus(`Loading ${url.href}`, "busy");
 
     try {
-      const arrayBuffer = this.app.fetchArrayBuffer
-        ? await this.app.fetchArrayBuffer(url.href)
-        : await fetchArrayBuffer(url.href, this.abortController.signal);
+      const arrayBuffer = await fetchRemoteNetCDF(url.href, this.abortController.signal, (message) =>
+        this.setStatus(message, "busy")
+      ).catch(async (error: unknown) => {
+        if (!this.app.fetchArrayBuffer) {
+          throw error;
+        }
+        this.setStatus(`Direct fetch failed; trying GeoLibre fetch bridge. ${errorMessage(error)}`, "busy");
+        return this.app.fetchArrayBuffer!(url.href);
+      });
       await this.loadArrayBuffer(arrayBuffer, url.href);
     } catch (error) {
       this.setStatus(errorMessage(error), "error");
@@ -1064,12 +1071,35 @@ function closeFloatingPanel(): void {
   floatingPanel = undefined;
 }
 
-async function fetchArrayBuffer(url: string, signal: AbortSignal): Promise<ArrayBuffer> {
+async function fetchRemoteNetCDF(
+  url: string,
+  signal: AbortSignal,
+  onStatus?: (message: string) => void
+): Promise<ArrayBuffer> {
+  const head = await fetch(url, { method: "HEAD", signal }).catch(() => undefined);
+  const contentLength = head?.headers.get("content-length");
+  const byteLength = contentLength ? Number(contentLength) : Number.NaN;
+  if (Number.isFinite(byteLength) && byteLength >= LARGE_REMOTE_FILE_BYTES) {
+    onStatus?.(
+      `Loading large NetCDF (${formatBytes(byteLength)}). This may take a moment; only one raster slice is rendered.`
+    );
+  }
+
   const response = await fetch(url, { signal });
   if (!response.ok) {
     throw new Error(`Fetch failed with HTTP ${response.status}.`);
   }
   return response.arrayBuffer();
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes >= 1024 * 1024 * 1024) {
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+  }
+  if (bytes >= 1024 * 1024) {
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+  return `${Math.round(bytes / 1024)} KB`;
 }
 
 function parseHttpsUrl(value: string): URL | undefined {
