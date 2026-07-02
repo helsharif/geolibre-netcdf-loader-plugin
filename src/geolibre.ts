@@ -108,7 +108,7 @@ interface GeneratedRasterOverlay {
 export const plugin: GeoLibrePlugin = {
   id: PLUGIN_ID,
   name: "NetCDF Loader",
-  version: "0.4.1",
+  version: "0.4.2",
   urlParameterNames: [NETCDF_URL_PARAM],
   activate(app) {
     unregisterPanel = app.registerRightPanel?.({
@@ -471,10 +471,10 @@ class NetCDFPanel {
       this.renderOverlayControls();
       const sampling =
         raster.sampledEvery > 1 ? ` Sampled every ${raster.sampledEvery} grid cells.` : "";
-      const mode = result.mode === "native" ? "Added native raster layer" : "Added MapLibre raster overlay";
+      const mode = result.mode === "native" ? "Added native raster layer" : "Added direct raster overlay";
       const note =
         result.mode === "maplibre"
-          ? " GeoLibre does not expose addCogLayer in this build, so the raster is managed from this plugin panel."
+          ? " Managed from this plugin panel because GeoLibre's COG registration can be present without drawing local in-memory rasters."
           : "";
       this.setStatus(
         `${mode} ${result.layerId} (${raster.width} x ${raster.height}, ${raster.validValueCount} cells).${sampling}${note}`,
@@ -489,11 +489,11 @@ class NetCDFPanel {
     layerName: string,
     raster: RasterGridResult
   ): Promise<{ layerId: string; mode: "native" | "maplibre" }> {
-    if (this.app.addCogLayer) {
-      return this.addNativeRasterLayer(layerName, raster);
+    if (this.app.getMap?.()) {
+      return this.addMapLibreRasterOverlay(layerName, raster);
     }
 
-    return this.addMapLibreRasterOverlay(layerName, raster);
+    return this.addNativeRasterLayer(layerName, raster);
   }
 
   private async addNativeRasterLayer(
@@ -518,9 +518,7 @@ class NetCDFPanel {
       });
       return { layerId, mode: "native" };
     } catch (error) {
-      const result = this.addMapLibreRasterOverlay(layerName, raster);
-      this.setStatus(`addCogLayer failed: ${errorMessage(error)} Using a MapLibre raster overlay.`, "busy");
-      return result;
+      throw new Error(`addCogLayer failed: ${errorMessage(error)}`);
     }
   }
 
@@ -531,7 +529,7 @@ class NetCDFPanel {
     const map = this.app.getMap?.();
     if (!map) {
       throw new Error(
-        "This GeoLibre build does not expose addCogLayer or direct map access, so the plugin cannot add a raster layer."
+        "This GeoLibre build does not expose direct map access, so the plugin cannot add a direct raster overlay."
       );
     }
 

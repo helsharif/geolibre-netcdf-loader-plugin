@@ -12,21 +12,21 @@ Developed by **Husayn El Sharif**.
 - Read NetCDF4/HDF5 files with `h5wasm`.
 - Detect common latitude and longitude coordinate variables.
 - Select non-spatial dimension indexes such as `time`, `level`, or `depth`.
-- Render selected slices as temporary GeoTIFF/COG-style raster layers through GeoLibre's native `addCogLayer` API when available.
-- Render as true MapLibre canvas raster overlays when the installed GeoLibre build does not expose `addCogLayer`.
+- Render selected slices as true MapLibre canvas raster overlays by default.
+- Keep GeoLibre's native `addCogLayer` path as a compatibility route when direct map access is unavailable.
 - Render with Panoply-inspired color ramps:
   - Temperature
   - Viridis
   - Turbo
   - Blue-red
   - Grayscale
-- Use GeoLibre's native layer path when available, with a plugin-managed raster overlay path for older builds.
+- Use plugin-managed MapLibre raster overlays by default, with GeoLibre's native layer path available as a compatibility route.
 
 ## Rendering Approach
 
-The preferred path converts the selected NetCDF slice into an in-memory, georeferenced single-band GeoTIFF and registers it through GeoLibre's native `addCogLayer` helper. This produces an actual raster layer in GeoLibre, with raster styling and layer-store integration.
+The default path renders the selected NetCDF slice into an in-memory canvas and registers it directly with MapLibre as a `canvas` source and `raster` layer. This avoids GeoLibre builds where `addCogLayer` registers a COG layer in the Layers panel but does not draw local in-memory rasters.
 
-If the installed GeoLibre build does not expose `addCogLayer`, the plugin renders the selected grid as a MapLibre `canvas` raster source and `raster` layer. This is still raster rendering, not a vector fallback. Because this path bypasses GeoLibre's layer store, the layer is managed from the plugin panel rather than the left Layers panel.
+When direct map access is unavailable, the plugin can still attempt GeoLibre's native `addCogLayer` path using an in-memory GeoTIFF. The direct canvas path is still raster rendering, not a vector fallback. Because it bypasses GeoLibre's layer store, direct overlays are managed from the plugin panel rather than the left Layers panel.
 
 ## Install
 
@@ -38,7 +38,7 @@ Download or build the plugin zip, then install it in GeoLibre Desktop:
 4. Select the generated zip:
 
 ```text
-geolibre-plugin/geolibre-netcdf-0.4.1.zip
+geolibre-plugin/geolibre-netcdf-0.4.2.zip
 ```
 
 You can also add the unpacked development directory:
@@ -57,7 +57,7 @@ geolibre-plugin
 6. Choose a colormap and opacity.
 7. Click **Add raster layer**.
 
-On GeoLibre builds with `addCogLayer`, the layer should appear in GeoLibre's Layers panel and on the map. On builds without `addCogLayer`, the raster appears on the map as a plugin-managed MapLibre overlay and can be removed from the NetCDF panel.
+The raster should appear on the map as a plugin-managed MapLibre overlay and can be removed from the NetCDF panel.
 
 ## Build From Source
 
@@ -69,7 +69,7 @@ npm run package:geolibre
 The packaged GeoLibre plugin archive is written to:
 
 ```text
-geolibre-plugin/geolibre-netcdf-0.4.1.zip
+geolibre-plugin/geolibre-netcdf-0.4.2.zip
 ```
 
 ## Development
@@ -94,7 +94,7 @@ The test suite includes a few pure grid helper checks. If a local sample file ex
 - Classic NetCDF3/CDF files are detected but not rendered in version 1.
 - Large multidimensional files are read in the browser/WebView, so very large arrays may be slow or memory-heavy.
 - Curvilinear grids and projected coordinates are not fully supported yet; the current renderer expects latitude and longitude coordinates.
-- Full GeoLibre Layers-panel integration requires a GeoLibre build that exposes `addCogLayer`; older builds use a plugin-managed MapLibre raster overlay instead.
+- Full GeoLibre Layers-panel integration depends on GeoLibre's `addCogLayer` behavior for local in-memory rasters. The default renderer uses plugin-managed MapLibre raster overlays because that path has proven more reliable in current GeoLibre Desktop builds.
 
 ## Repository Topics
 
