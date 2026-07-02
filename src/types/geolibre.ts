@@ -40,6 +40,7 @@ export interface GeoLibreAppAPI {
   getMap?: () => GeoLibreMapLike;
   setMapProjection?: (projection: "globe" | "mercator") => void;
   getMapProjection?: () => "globe" | "mercator";
+  getIdentifyLayerId?: () => string | null;
   addMapControl?: (
     control: GeoLibreMapControl,
     position?: GeoLibreMapControlPosition
@@ -91,6 +92,11 @@ export interface GeoLibreMapLike {
   removeLayer: (id: string) => void;
   getLayer: (id: string) => unknown;
   setPaintProperty?: (layerId: string, name: string, value: unknown) => void;
+  on?: (type: string, listener: (event: unknown) => void) => void;
+  off?: (type: string, listener: (event: unknown) => void) => void;
+  getCanvas?: () => HTMLCanvasElement;
+  getContainer?: () => HTMLElement;
+  project?: (lngLat: [number, number]) => { x: number; y: number };
 }
 
 export interface GeoLibreRightPanelRegistration {

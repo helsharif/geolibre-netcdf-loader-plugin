@@ -7,7 +7,6 @@ import {
   variableLabel
 } from "./netcdf";
 import type {
-  FeatureCollection,
   GeoLibreAppAPI,
   GeoLibreMapControl,
   GeoLibreMapLike,
@@ -100,21 +99,32 @@ let mapControl: NetCDFMapControl | undefined;
 let floatingPanel: HTMLElement | undefined;
 let floatingPanelView: NetCDFPanel | undefined;
 let savedMapProjection: "globe" | "mercator" | undefined;
+let rasterIdentifyBinding: RasterIdentifyBinding | undefined;
+let rasterIdentifyPopup: HTMLElement | undefined;
 const generatedRasterOverlays: GeneratedRasterOverlay[] = [];
 
 interface GeneratedRasterOverlay {
   sourceId: string;
   layerId: string;
-  identifySourceId?: string;
-  identifyLayerId?: string;
   name: string;
   registered: boolean;
+  raster: RasterGridResult;
+}
+
+interface RasterIdentifyBinding {
+  map: GeoLibreMapLike;
+  onClick: (event: unknown) => void;
+}
+
+interface GeoLibreMapMouseEvent {
+  lngLat: { lng: number; lat: number } | { lng: number; lat: number; toArray?: () => [number, number] };
+  point?: { x: number; y: number };
 }
 
 export const plugin: GeoLibrePlugin = {
   id: PLUGIN_ID,
   name: "NetCDF Loader",
-  version: "0.5.4",
+  version: "0.5.5",
   urlParameterNames: [NETCDF_URL_PARAM],
   activate(app) {
     unregisterPanel = app.registerRightPanel?.({
@@ -155,6 +165,7 @@ export const plugin: GeoLibrePlugin = {
     }
     unregisterRegisteredRasterOverlays(app);
     removeAllGeneratedRasterOverlays(app.getMap?.());
+    unbindRasterIdentify();
     restoreMapProjection(app);
     closeFloatingPanel();
     unregisterMenu?.();
@@ -539,14 +550,13 @@ class NetCDFPanel {
     ensureMercatorProjection(this.app);
     const canvas = renderRasterToCanvas(raster, this.pluginState.colormap);
     const overlay = addRasterCanvasLayer(map, layerName, canvas, raster, this.pluginState.opacity);
-    const identifyOverlay = addRasterIdentifyLayer(map, layerName, raster, overlay.layerId);
     generatedRasterOverlays.push({
       ...overlay,
-      identifySourceId: identifyOverlay.sourceId,
-      identifyLayerId: identifyOverlay.layerId,
       name: layerName,
-      registered: true
+      registered: true,
+      raster
     });
+    ensureRasterIdentifyListener(this.app);
     this.app.registerExternalNativeLayer({
       id: overlay.layerId,
       name: layerName,
@@ -557,8 +567,8 @@ class NetCDFPanel {
         variable: raster.variableName
       },
       sourceId: overlay.sourceId,
-      sourceIds: [overlay.sourceId, identifyOverlay.sourceId],
-      nativeLayerIds: [overlay.layerId, identifyOverlay.layerId],
+      sourceIds: [overlay.sourceId],
+      nativeLayerIds: [overlay.layerId],
       opacity: this.pluginState.opacity,
       metadata: {
         sourceKind: "geolibre-netcdf-raster",
@@ -585,7 +595,7 @@ class NetCDFPanel {
     ensureMercatorProjection(this.app);
     const canvas = renderRasterToCanvas(raster, this.pluginState.colormap);
     const overlay = addRasterCanvasLayer(map, layerName, canvas, raster, this.pluginState.opacity);
-    generatedRasterOverlays.push({ ...overlay, name: layerName, registered: false });
+    generatedRasterOverlays.push({ ...overlay, name: layerName, registered: false, raster });
     return { layerId: overlay.layerId, mode: "maplibre" };
   }
 
@@ -719,83 +729,6 @@ function addRasterCanvasLayer(
   return { sourceId, layerId };
 }
 
-function addRasterIdentifyLayer(
-  map: GeoLibreMapLike,
-  name: string,
-  raster: RasterGridResult,
-  rasterLayerId: string
-): { sourceId: string; layerId: string } {
-  const sourceId = `${rasterLayerId}-identify-source`;
-  const layerId = `${rasterLayerId}-identify`;
-  map.addSource(sourceId, {
-    type: "geojson",
-    data: rasterToIdentifyFeatureCollection(raster)
-  });
-  map.addLayer({
-    id: layerId,
-    type: "fill",
-    source: sourceId,
-    metadata: {
-      "geolibre:displayName": `${name} identify cells`,
-      "geolibre:plugin": PLUGIN_ID
-    },
-    paint: {
-      "fill-color": "#000000",
-      "fill-opacity": 0
-    }
-  });
-  return { sourceId, layerId };
-}
-
-function rasterToIdentifyFeatureCollection(raster: RasterGridResult): FeatureCollection {
-  const features: FeatureCollection["features"] = [];
-  const lonEdges = centersToEdges(raster.lonCenters, raster.bounds[0], raster.bounds[2]);
-  const latEdges = centersToEdges(raster.latCenters, raster.bounds[3], raster.bounds[1]);
-
-  for (let row = 0; row < raster.height; row += 1) {
-    const north = latEdges[row];
-    const south = latEdges[row + 1];
-    const minLat = Math.min(south, north);
-    const maxLat = Math.max(south, north);
-    for (let column = 0; column < raster.width; column += 1) {
-      const value = raster.values[row * raster.width + column];
-      if (!Number.isFinite(value)) {
-        continue;
-      }
-      const west = lonEdges[column];
-      const east = lonEdges[column + 1];
-      const minLon = Math.min(west, east);
-      const maxLon = Math.max(west, east);
-      features.push({
-        type: "Feature",
-        geometry: {
-          type: "Polygon",
-          coordinates: [
-            [
-              [minLon, minLat],
-              [maxLon, minLat],
-              [maxLon, maxLat],
-              [minLon, maxLat],
-              [minLon, minLat]
-            ]
-          ]
-        },
-        properties: {
-          variable: raster.variableName,
-          value,
-          row,
-          column,
-          longitude: raster.lonCenters[column],
-          latitude: raster.latCenters[row],
-          sampled_every: raster.sampledEvery
-        }
-      });
-    }
-  }
-
-  return { type: "FeatureCollection", features };
-}
-
 function centersToEdges(centers: number[], firstFallback: number, lastFallback: number): number[] {
   if (centers.length === 0) {
     return [firstFallback, lastFallback];
@@ -850,20 +783,17 @@ function removeGeneratedRasterOverlay(map: GeoLibreMapLike | undefined, layerId:
   }
   const [overlay] = generatedRasterOverlays.splice(index, 1);
   try {
-    if (overlay.identifyLayerId && map?.getLayer(overlay.identifyLayerId)) {
-      map.removeLayer(overlay.identifyLayerId);
-    }
     if (map?.getLayer(overlay.layerId)) {
       map.removeLayer(overlay.layerId);
-    }
-    if (overlay.identifySourceId && map?.getSource(overlay.identifySourceId)) {
-      map.removeSource(overlay.identifySourceId);
     }
     if (map?.getSource(overlay.sourceId)) {
       map.removeSource(overlay.sourceId);
     }
   } catch {
     // If GeoLibre already reset the map style, the overlay may already be gone.
+  }
+  if (!generatedRasterOverlays.some((entry) => entry.registered)) {
+    unbindRasterIdentify();
   }
 }
 
@@ -877,6 +807,167 @@ function unregisterRegisteredRasterOverlays(app: GeoLibreAppAPI): void {
   for (const overlay of generatedRasterOverlays.filter((entry) => entry.registered)) {
     app.unregisterExternalNativeLayer?.(overlay.layerId);
   }
+}
+
+function ensureRasterIdentifyListener(app: GeoLibreAppAPI): void {
+  const map = app.getMap?.();
+  if (!map?.on || !map.off) {
+    return;
+  }
+  if (rasterIdentifyBinding?.map === map) {
+    return;
+  }
+  unbindRasterIdentify();
+  const onClick = (event: unknown) => {
+    if (!isMapMouseEvent(event)) {
+      return;
+    }
+    const sample = identifyRasterSample(app, map, event);
+    if (!sample) {
+      return;
+    }
+    showRasterIdentifyPopup(map, event, sample);
+  };
+  map.on("click", onClick);
+  rasterIdentifyBinding = { map, onClick };
+}
+
+function isMapMouseEvent(event: unknown): event is GeoLibreMapMouseEvent {
+  if (!event || typeof event !== "object") {
+    return false;
+  }
+  const candidate = event as { lngLat?: { lng?: unknown; lat?: unknown } };
+  return typeof candidate.lngLat?.lng === "number" && typeof candidate.lngLat.lat === "number";
+}
+
+function unbindRasterIdentify(): void {
+  if (rasterIdentifyBinding) {
+    rasterIdentifyBinding.map.off?.("click", rasterIdentifyBinding.onClick);
+    rasterIdentifyBinding = undefined;
+  }
+  rasterIdentifyPopup?.remove();
+  rasterIdentifyPopup = undefined;
+}
+
+function identifyRasterSample(
+  app: GeoLibreAppAPI,
+  map: GeoLibreMapLike,
+  event: GeoLibreMapMouseEvent
+): RasterIdentifySample | undefined {
+  const activeIdentifyLayerId = app.getIdentifyLayerId?.();
+  const candidateOverlays = generatedRasterOverlays.filter((overlay) => overlay.registered);
+  const candidates = activeIdentifyLayerId
+    ? candidateOverlays.filter((overlay) => overlay.layerId === activeIdentifyLayerId)
+    : isMapInIdentifyMode(map)
+      ? [...candidateOverlays].reverse()
+      : [];
+
+  for (const overlay of candidates) {
+    const sample = sampleRasterAtLngLat(overlay, event.lngLat.lng, event.lngLat.lat);
+    if (sample) {
+      return sample;
+    }
+  }
+  return undefined;
+}
+
+function isMapInIdentifyMode(map: GeoLibreMapLike): boolean {
+  return map.getCanvas?.().style.cursor === "crosshair";
+}
+
+interface RasterIdentifySample {
+  overlay: GeneratedRasterOverlay;
+  value: number;
+  row: number;
+  column: number;
+  longitude: number;
+  latitude: number;
+}
+
+function sampleRasterAtLngLat(
+  overlay: GeneratedRasterOverlay,
+  lng: number,
+  lat: number
+): RasterIdentifySample | undefined {
+  const raster = overlay.raster;
+  const [west, south, east, north] = raster.bounds;
+  if (lng < west || lng > east || lat < south || lat > north) {
+    return undefined;
+  }
+
+  const column = indexFromEdges(lng, centersToEdges(raster.lonCenters, west, east));
+  const row = indexFromEdges(lat, centersToEdges(raster.latCenters, north, south));
+  if (row < 0 || column < 0 || row >= raster.height || column >= raster.width) {
+    return undefined;
+  }
+
+  const value = raster.values[row * raster.width + column];
+  if (!Number.isFinite(value)) {
+    return undefined;
+  }
+
+  return {
+    overlay,
+    value,
+    row,
+    column,
+    longitude: raster.lonCenters[column],
+    latitude: raster.latCenters[row]
+  };
+}
+
+function indexFromEdges(value: number, edges: number[]): number {
+  for (let index = 0; index < edges.length - 1; index += 1) {
+    const min = Math.min(edges[index], edges[index + 1]);
+    const max = Math.max(edges[index], edges[index + 1]);
+    if (value >= min && value <= max) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function showRasterIdentifyPopup(
+  map: GeoLibreMapLike,
+  event: GeoLibreMapMouseEvent,
+  sample: RasterIdentifySample
+): void {
+  const container = map.getContainer?.();
+  const point = event.point ?? map.project?.([event.lngLat.lng, event.lngLat.lat]);
+  if (!container || !point) {
+    return;
+  }
+
+  rasterIdentifyPopup?.remove();
+  const popup = el("div", "geolibre-netcdf-identify");
+  popup.style.left = `${point.x}px`;
+  popup.style.top = `${point.y}px`;
+  const closeButton = button("x", () => {
+    popup.remove();
+    if (rasterIdentifyPopup === popup) {
+      rasterIdentifyPopup = undefined;
+    }
+  });
+  closeButton.className = "geolibre-netcdf-identify__close";
+  popup.append(
+    closeButton,
+    el("h4", "", sample.overlay.name),
+    identifyRow("variable", sample.overlay.raster.variableName),
+    identifyRow("value", formatNumber(sample.value)),
+    identifyRow("row", String(sample.row)),
+    identifyRow("column", String(sample.column)),
+    identifyRow("longitude", formatNumber(sample.longitude)),
+    identifyRow("latitude", formatNumber(sample.latitude)),
+    identifyRow("sampled_every", String(sample.overlay.raster.sampledEvery))
+  );
+  container.append(popup);
+  rasterIdentifyPopup = popup;
+}
+
+function identifyRow(label: string, value: string): HTMLElement {
+  const row = el("div", "geolibre-netcdf-identify__row");
+  row.append(el("span", "", label), el("strong", "", value));
+  return row;
 }
 
 function ensureMercatorProjection(app: GeoLibreAppAPI): void {

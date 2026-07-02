@@ -15,7 +15,7 @@ Developed by **Husayn El Sharif**.
 - Select non-spatial dimension indexes such as `time`, `level`, or `depth`.
 - Choose between a GeoLibre-registered raster layer that appears in the left Layers panel and a direct MapLibre raster overlay.
 - Register plugin-owned raster layers with GeoLibre through `registerExternalNativeLayer`.
-- Identify raster pixel values from GeoLibre's Layers-panel Identify tool.
+- Identify raster pixel values from GeoLibre's Layers-panel Identify tool with direct click-to-value sampling.
 - Switch GeoLibre to Mercator while NetCDF rasters are active so canvas rasters align with the basemap.
 - Render with Panoply-inspired color ramps:
   - Temperature
@@ -27,7 +27,7 @@ Developed by **Husayn El Sharif**.
 
 ## Rendering Approach
 
-The default **GeoLibre layer (left panel)** mode renders the selected NetCDF slice as a MapLibre canvas raster layer, then registers that plugin-owned native layer with GeoLibre through `registerExternalNativeLayer`. It also adds a transparent per-cell hit-test layer so GeoLibre's Identify tool can report the clicked pixel value. Because MapLibre canvas rasters are planar sources, the plugin switches GeoLibre to Mercator while active and restores the previous projection when the plugin deactivates.
+The default **GeoLibre layer (left panel)** mode renders the selected NetCDF slice as a MapLibre canvas raster layer, then registers that plugin-owned native layer with GeoLibre through `registerExternalNativeLayer`. GeoLibre's Identify button activates a plugin click sampler that converts the clicked longitude/latitude into a raster row and column, then reads the value directly from the typed array. Because MapLibre canvas rasters are planar sources, the plugin switches GeoLibre to Mercator while active and restores the previous projection when the plugin deactivates.
 
 The **Direct raster overlay** mode renders the same slice into an in-memory canvas and registers it directly with MapLibre as a `canvas` source and `raster` layer. This is still raster rendering, not a vector fallback, but it bypasses GeoLibre's layer store, so direct overlays are managed from the plugin panel rather than the left Layers panel.
 
@@ -41,7 +41,7 @@ Download or build the plugin zip, then install it in GeoLibre Desktop:
 4. Select the generated zip:
 
 ```text
-geolibre-plugin/geolibre-netcdf-0.5.4.zip
+geolibre-plugin/geolibre-netcdf-0.5.5.zip
 ```
 
 You can also add the unpacked development directory:
@@ -73,7 +73,7 @@ npm run package:geolibre
 The packaged GeoLibre plugin archive is written to:
 
 ```text
-geolibre-plugin/geolibre-netcdf-0.5.4.zip
+geolibre-plugin/geolibre-netcdf-0.5.5.zip
 ```
 
 ## Development
