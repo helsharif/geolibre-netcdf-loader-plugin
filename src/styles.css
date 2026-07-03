@@ -58,6 +58,21 @@
   font-weight: 600;
 }
 
+.geolibre-netcdf__check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--geolibre-netcdf-control-text);
+  font-weight: 500;
+}
+
+.geolibre-netcdf__check input {
+  width: auto;
+  min-height: auto;
+  margin: 0;
+  padding: 0;
+}
+
 .geolibre-netcdf__row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

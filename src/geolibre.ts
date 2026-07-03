@@ -27,6 +27,7 @@ interface PluginState {
   fixedDimensions: Record<string, number>;
   maxPixels: number;
   colormap: ColorMapName;
+  reverseColormap: boolean;
   opacity: number;
   layerMode: LayerMode;
 }
@@ -35,6 +36,7 @@ const state: PluginState = {
   fixedDimensions: {},
   maxPixels: 1000000,
   colormap: "temperature",
+  reverseColormap: false,
   opacity: 0.82,
   layerMode: "geolibre"
 };
@@ -111,6 +113,12 @@ interface GeneratedRasterOverlay {
   name: string;
   registered: boolean;
   raster: RasterGridResult;
+  sliceInfo: RasterSliceInfo[];
+}
+
+interface RasterSliceInfo {
+  label: string;
+  value: string;
 }
 
 interface RasterIdentifyBinding {
@@ -199,6 +207,7 @@ export const plugin: GeoLibrePlugin = {
     state.fixedDimensions = { ...projectState.fixedDimensions };
     state.maxPixels = projectState.maxPixels;
     state.colormap = projectState.colormap;
+    state.reverseColormap = projectState.reverseColormap ?? false;
     state.opacity = projectState.opacity;
     state.layerMode = projectState.layerMode ?? "geolibre";
     return true;
@@ -362,7 +371,8 @@ class NetCDFPanel {
     const selectedVariable = this.selectedVariable();
     if (selectedVariable) {
       dataset.append(this.renderSliceControls(selectedVariable));
-      const colorLabel = el("label", "geolibre-netcdf__label", "Colormap");
+      const colorLabel = el("div", "geolibre-netcdf__label");
+      colorLabel.append(el("span", "", "Colormap"));
       const colorSelect = document.createElement("select");
       for (const [name, colorMap] of Object.entries(COLOR_MAPS)) {
         const option = document.createElement("option");
@@ -371,10 +381,21 @@ class NetCDFPanel {
         colorSelect.append(option);
       }
       colorSelect.value = this.pluginState.colormap;
+      const colorRamp = renderColorRamp(this.pluginState.colormap, this.pluginState.reverseColormap);
       colorSelect.addEventListener("change", () => {
         this.pluginState.colormap = colorSelect.value as ColorMapName;
+        updateColorRamp(colorRamp, this.pluginState.colormap, this.pluginState.reverseColormap);
       });
-      colorLabel.append(colorSelect, renderColorRamp(this.pluginState.colormap));
+      const reverseLabel = el("label", "geolibre-netcdf__check");
+      const reverseInput = document.createElement("input");
+      reverseInput.type = "checkbox";
+      reverseInput.checked = this.pluginState.reverseColormap;
+      reverseInput.addEventListener("change", () => {
+        this.pluginState.reverseColormap = reverseInput.checked;
+        updateColorRamp(colorRamp, this.pluginState.colormap, this.pluginState.reverseColormap);
+      });
+      reverseLabel.append(reverseInput, el("span", "", "Reverse colormap"));
+      colorLabel.append(colorSelect, colorRamp, reverseLabel);
 
       const opacityLabel = el(
         "label",
@@ -584,7 +605,7 @@ class NetCDFPanel {
         maxPixels: this.pluginState.maxPixels
       });
       const layerName = `${variable.name} raster from ${this.pluginState.sourceLabel ?? "NetCDF"}`;
-      const result = await this.addRasterLayer(layerName, raster);
+      const result = await this.addRasterLayer(layerName, raster, this.rasterSliceInfo(variable));
       this.app.fitBounds?.(raster.bounds);
       this.renderLegend(raster);
       this.renderOverlayControls();
@@ -606,18 +627,20 @@ class NetCDFPanel {
 
   private async addRasterLayer(
     layerName: string,
-    raster: RasterGridResult
+    raster: RasterGridResult,
+    sliceInfo: RasterSliceInfo[]
   ): Promise<{ layerId: string; mode: "registered" | "maplibre" }> {
     if (this.pluginState.layerMode === "direct") {
-      return this.addMapLibreRasterOverlay(layerName, raster);
+      return this.addMapLibreRasterOverlay(layerName, raster, sliceInfo);
     }
 
-    return this.addRegisteredRasterOverlay(layerName, raster);
+    return this.addRegisteredRasterOverlay(layerName, raster, sliceInfo);
   }
 
   private addRegisteredRasterOverlay(
     layerName: string,
-    raster: RasterGridResult
+    raster: RasterGridResult,
+    sliceInfo: RasterSliceInfo[]
   ): { layerId: string; mode: "registered" } {
     if (!this.app.registerExternalNativeLayer) {
       throw new Error(
@@ -632,13 +655,18 @@ class NetCDFPanel {
     }
 
     ensureMercatorProjection(this.app);
-    const canvas = renderRasterToCanvas(raster, this.pluginState.colormap);
+    const canvas = renderRasterToCanvas(
+      raster,
+      this.pluginState.colormap,
+      this.pluginState.reverseColormap
+    );
     const overlay = addRasterCanvasLayer(map, layerName, canvas, raster, this.pluginState.opacity);
     generatedRasterOverlays.push({
       ...overlay,
       name: layerName,
       registered: true,
-      raster
+      raster,
+      sliceInfo
     });
     ensureRasterIdentifyListener(this.app);
     this.app.registerExternalNativeLayer({
@@ -667,7 +695,8 @@ class NetCDFPanel {
 
   private addMapLibreRasterOverlay(
     layerName: string,
-    raster: RasterGridResult
+    raster: RasterGridResult,
+    sliceInfo: RasterSliceInfo[]
   ): { layerId: string; mode: "maplibre" } {
     const map = this.app.getMap?.();
     if (!map) {
@@ -677,10 +706,37 @@ class NetCDFPanel {
     }
 
     ensureMercatorProjection(this.app);
-    const canvas = renderRasterToCanvas(raster, this.pluginState.colormap);
+    const canvas = renderRasterToCanvas(
+      raster,
+      this.pluginState.colormap,
+      this.pluginState.reverseColormap
+    );
     const overlay = addRasterCanvasLayer(map, layerName, canvas, raster, this.pluginState.opacity);
-    generatedRasterOverlays.push({ ...overlay, name: layerName, registered: false, raster });
+    generatedRasterOverlays.push({ ...overlay, name: layerName, registered: false, raster, sliceInfo });
     return { layerId: overlay.layerId, mode: "maplibre" };
+  }
+
+  private rasterSliceInfo(variable: VariableSummary): RasterSliceInfo[] {
+    const summary = this.summary;
+    if (!summary) {
+      return [];
+    }
+    const sliceInfo: RasterSliceInfo[] = [];
+    for (const dimension of variable.dimensions) {
+      if (isSpatialDimension(dimension.name)) {
+        continue;
+      }
+      const timeAxis = getTimeAxisInfo(summary, dimension);
+      if (!timeAxis) {
+        continue;
+      }
+      const index = this.fixedDimensionIndex(dimension);
+      sliceInfo.push({
+        label: timeAxis.variableName || dimension.name,
+        value: timeDisplayLabel(timeAxis, index)
+      });
+    }
+    return sliceInfo;
   }
 
   private renderLegend(raster: RasterGridResult): void {
@@ -690,7 +746,7 @@ class NetCDFPanel {
     }
     dataset.querySelector(".geolibre-netcdf__legend")?.remove();
     const legend = el("div", "geolibre-netcdf__legend");
-    const ramp = renderColorRamp(this.pluginState.colormap);
+    const ramp = renderColorRamp(this.pluginState.colormap, this.pluginState.reverseColormap);
     const labels = el("div", "geolibre-netcdf__legend-labels");
     labels.append(
       el("span", "", formatNumber(raster.valueRange[0])),
@@ -870,7 +926,11 @@ function centersToEdges(centers: number[], firstFallback: number, lastFallback: 
   return edges;
 }
 
-function renderRasterToCanvas(raster: RasterGridResult, colorMapName: ColorMapName): HTMLCanvasElement {
+function renderRasterToCanvas(
+  raster: RasterGridResult,
+  colorMapName: ColorMapName,
+  reverseColormap = false
+): HTMLCanvasElement {
   const canvas = document.createElement("canvas");
   canvas.width = raster.width;
   canvas.height = raster.height;
@@ -889,7 +949,7 @@ function renderRasterToCanvas(raster: RasterGridResult, colorMapName: ColorMapNa
       image.data[offset + 3] = 0;
       continue;
     }
-    const color = sampleColorMap(colorMapName, (value - minValue) / span);
+    const color = sampleColorMap(colorMapName, (value - minValue) / span, reverseColormap);
     image.data[offset] = color[0];
     image.data[offset + 1] = color[1];
     image.data[offset + 2] = color[2];
@@ -1078,6 +1138,7 @@ function showRasterIdentifyPopup(
     el("h4", "", sample.overlay.name),
     identifyRow("variable", sample.overlay.raster.variableName),
     identifyRow("value", formatNumber(sample.value)),
+    ...sample.overlay.sliceInfo.map((entry) => identifyRow(entry.label, entry.value)),
     identifyRow("row", String(sample.row)),
     identifyRow("column", String(sample.column)),
     identifyRow("longitude", formatNumber(sample.longitude)),
@@ -1114,16 +1175,27 @@ function restoreMapProjection(app: GeoLibreAppAPI): void {
   savedMapProjection = undefined;
 }
 
-function renderColorRamp(colorMapName: ColorMapName): HTMLElement {
+function renderColorRamp(colorMapName: ColorMapName, reverseColormap = false): HTMLElement {
   const ramp = el("div", "geolibre-netcdf__ramp");
-  ramp.style.background = `linear-gradient(90deg, ${COLOR_MAPS[colorMapName].stops
-    .map(([position, color]) => `${color} ${Math.round(position * 100)}%`)
-    .join(", ")})`;
+  updateColorRamp(ramp, colorMapName, reverseColormap);
   return ramp;
 }
 
-function sampleColorMap(colorMapName: ColorMapName, rawPosition: number): [number, number, number] {
-  const position = Math.max(0, Math.min(1, rawPosition));
+function updateColorRamp(ramp: HTMLElement, colorMapName: ColorMapName, reverseColormap = false): void {
+  const stops = COLOR_MAPS[colorMapName].stops
+    .map(([position, color]) => [reverseColormap ? 1 - position : position, color] as const)
+    .sort(([left], [right]) => left - right);
+  ramp.style.background = `linear-gradient(90deg, ${stops
+    .map(([position, color]) => `${color} ${Math.round(position * 100)}%`)
+    .join(", ")})`;
+}
+
+function sampleColorMap(
+  colorMapName: ColorMapName,
+  rawPosition: number,
+  reverseColormap = false
+): [number, number, number] {
+  const position = Math.max(0, Math.min(1, reverseColormap ? 1 - rawPosition : rawPosition));
   const stops = COLOR_MAPS[colorMapName].stops;
   for (let index = 1; index < stops.length; index += 1) {
     const previous = stops[index - 1];
